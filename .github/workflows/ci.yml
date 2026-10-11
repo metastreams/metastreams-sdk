@@ -1,0 +1,73 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUSTDOCFLAGS: "-D warnings"
+
+jobs:
+  check:
+    name: fmt, clippy, test, doc
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      # A failing step does not stop the later ones, so one run reports every failure.
+      - name: Check formatting
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --all-features --locked
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --all-features --locked
+      - name: Doc
+        if: ${{ !cancelled() }}
+        run: cargo doc --workspace --no-deps --all-features --locked
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check licenses, bans and sources
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check licenses bans sources
+          command-arguments: "--hide-inclusion-graph"
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Read rust-version from the manifest
+        id: msrv
+        run: echo "version=$(grep -E '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')" >> "$GITHUB_OUTPUT"
+      - name: Set up the MSRV toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+          override: true
+      - name: Check on the MSRV
+        run: cargo check --workspace --all-targets --all-features --locked
