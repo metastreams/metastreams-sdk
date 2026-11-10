@@ -467,6 +467,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_native_prices_read_names_every_chain_this_build_knows_and_reads_a_price() {
+        let every_chain: Vec<String> = SpotChain::iter().map(|chain| chain.to_string()).collect();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/native-prices"))
+            .and(query_param("chains", every_chain.join(",")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "nativePrices": [{
+                    "chain": "solana",
+                    "asset": "SOL",
+                    "price": { "native": "1", "usd": "150.25" },
+                    "observedAt": 1_790_930_462_000_u64,
+                }],
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let prices = provider(&server).native_prices(&NativePricesQuery::default()).await;
+        let prices = prices.expect("prices").native_prices;
+
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].chain, SpotChain::Solana);
+        assert_eq!(prices[0].price.usd.map(|usd| usd.to_string()).as_deref(), Some("150.25"));
+    }
+
+    #[tokio::test]
     async fn a_positions_read_sends_its_sort_and_filters() {
         let wallet = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
         let server = MockServer::start().await;

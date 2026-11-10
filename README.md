@@ -15,7 +15,7 @@ The crates are not on crates.io yet. Take them as a git dependency pinned to a t
 
 ```toml
 [dependencies]
-metastreams-sdk = { git = "https://github.com/tradeonapex/metastreams-sdk", tag = "v0.1.0" }
+metastreams-sdk = { git = "https://github.com/metastreams/metastreams-sdk", tag = "v0.2.0" }
 tokio           = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -31,9 +31,10 @@ use metastreams_sdk::{MetastreamsProvider, MultiChainAddress, SpotChain};
 #[tokio::main]
 async fn main() -> metastreams_sdk::Result<()> {
     let provider = MetastreamsProvider::new(std::env::var("METASTREAMS_API_KEY").unwrap())?;
-    let address: MultiChainAddress = "So11111111111111111111111111111111111111112".parse().unwrap();
-    let token = provider.token_details(SpotChain::Solana, &address).await?;
-    println!("{} ({}) has {} pools", token.name, token.symbol, token.pools.len());
+    let usdc: MultiChainAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".parse().unwrap();
+    let token = provider.token_details(SpotChain::Solana, &usdc).await?;
+    let card = &token.card;
+    println!("{} ({}) has {} pools", card.name, card.symbol, card.pools.len());
     Ok(())
 }
 ```

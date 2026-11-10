@@ -4,14 +4,14 @@
 
 use metastreams_sdk::{MetastreamsProvider, MultiChainAddress, SpotChain};
 
-const WSOL: &str = "So11111111111111111111111111111111111111112";
+const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 #[tokio::main]
 async fn main() -> metastreams_sdk::Result<()> {
     let key = std::env::var("METASTREAMS_API_KEY").expect("METASTREAMS_API_KEY is set");
     let address: MultiChainAddress = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| WSOL.to_owned())
+        .unwrap_or_else(|| USDC.to_owned())
         .parse()
         .expect("a Solana or EVM address");
 

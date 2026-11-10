@@ -25,6 +25,12 @@ All notable changes to the two crates in this repository. The format follows [Ke
 
 - `token_theses`, `native_prices` and `trending_board` on `MetastreamsProvider`.
 - `TrendingWindow` re-exported at the crate root.
+- `tests/live.rs`: ignored checks of every REST operation and every stream channel against the live API. They run with `METASTREAMS_API_KEY` set and `--ignored`.
+
+### Fixed
+
+- The `token_details` example and the README read USDC. The API does not serve wSOL as a token.
+- The README and the manifests point at `github.com/metastreams/metastreams-sdk`.
 
 ## 0.1.0 - 2026-10-11
 
