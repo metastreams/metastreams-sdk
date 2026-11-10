@@ -63,6 +63,8 @@ pub enum UiTokenFeeKind {
     QuoteTokenFee,
     /// The pool's fee, on a token trading at an AMM.
     PoolFee,
+    /// The DEX's own cut on each swap, taken beside the pool's fee.
+    DexProtocolFee,
     /// A hook's own cut, taken beside the pool's fee rather than as part of it.
     HookFee,
     /// A launch-time cut that decays, charged to price out snipers.
@@ -135,7 +137,7 @@ pub struct UiTokenFeeRecipient {
 pub struct UiFeeAsset {
     /// The asset's contract address.
     pub address: String,
-    /// Its display symbol; `null` where the registry names none.
+    /// Its display symbol; `null` where none is known.
     pub symbol: Option<String>,
 }
 

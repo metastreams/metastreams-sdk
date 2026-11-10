@@ -23,6 +23,8 @@ pub enum TokenAnnotation {
     StockDividend,
     /// The launch's revenue vault runs on Flap's AI Oracle.
     AiVault,
+    /// The launch pays its tax into a revenue vault.
+    TaxVault,
     /// A kind this build does not name. Read-only: the server never sends it.
     #[serde(other, skip_serializing)]
     Unknown,
@@ -41,6 +43,7 @@ impl TokenAnnotation {
             Self::StockQuote => "stock_quote",
             Self::StockDividend => "stock_dividend",
             Self::AiVault => "ai_vault",
+            Self::TaxVault => "tax_vault",
             Self::Unknown => "unknown",
         }
     }

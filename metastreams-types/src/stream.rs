@@ -12,13 +12,16 @@ use crate::address::MultiChainAddress;
 use crate::balance::UiWalletBalance;
 use crate::candle::{CandleDenomination, CandleMetric, UiCandleUpdate, optional_camel_case_metric};
 use crate::chain::{SpotChain, de};
+use crate::discovery::{SpotPulseSubscriptionConfig, UiSpotPulseUpdate};
 use crate::error::{ErrorDetail, FieldError};
 use crate::filter::{CandleFilter, TokenFilter, TradeFilter, TransferFilter};
+use crate::native_price::UiNativePrice;
 use crate::position::UiSpotPosition;
 use crate::token::UiSpotToken;
 use crate::token::holders::UiSpotHolder;
 use crate::trade::{UiSpotTrade, WalletFilter};
 use crate::transfer::UiSpotTransfer;
+use crate::trending::{SpotTrendingFilter, UiSpotTrendingUpdate};
 
 /// The subprotocol a browser offers beside its session token on the handshake, and the one the
 /// server selects.
@@ -133,6 +136,33 @@ pub struct SpotHoldersFilter {
 impl Subscription for SpotHoldersFilter {
     const CHANNEL: &'static str = "spot.holders";
     type Update = UiSpotHolder;
+    type Exit = NoExit;
+}
+
+/// `chain.nativePrices` filter: the chains whose gas asset prices to send.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativePricesFilter {
+    /// Chains to keep; empty keeps every chain.
+    #[serde(default, deserialize_with = "de::list", skip_serializing_if = "Vec::is_empty")]
+    pub chains: Vec<SpotChain>,
+}
+
+impl Subscription for NativePricesFilter {
+    const CHANNEL: &'static str = "chain.nativePrices";
+    type Update = UiNativePrice;
+    type Exit = NoExit;
+}
+
+impl Subscription for SpotTrendingFilter {
+    const CHANNEL: &'static str = "spot.trending";
+    type Update = UiSpotTrendingUpdate;
+    type Exit = NoExit;
+}
+
+impl Subscription for SpotPulseSubscriptionConfig {
+    const CHANNEL: &'static str = "spot.discovery";
+    type Update = UiSpotPulseUpdate;
     type Exit = NoExit;
 }
 
@@ -532,5 +562,17 @@ mod tests {
             let read = serde_json::from_value::<SpotHoldersFilter>(json.clone());
             assert!(read.is_err(), "{json} parses");
         }
+    }
+
+    #[test]
+    fn a_native_prices_filter_refuses_an_unknown_chain_or_key() {
+        for json in
+            [serde_json::json!({ "chains": ["eth"] }), serde_json::json!({ "chain": "solana" })]
+        {
+            let read = serde_json::from_value::<NativePricesFilter>(json.clone());
+            assert!(read.is_err(), "{json} parses");
+        }
+        let every = serde_json::from_value::<NativePricesFilter>(serde_json::json!({}));
+        assert_eq!(every.expect("{} keeps every chain"), NativePricesFilter::default());
     }
 }

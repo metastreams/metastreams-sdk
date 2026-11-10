@@ -14,6 +14,7 @@ pub use metastreams_types::discovery::SpotSortField;
 pub use metastreams_types::discovery::filters::SpotTokenFilters;
 pub use metastreams_types::sort::SortOrder;
 pub use metastreams_types::time::UnixMilliseconds;
+pub use metastreams_types::trending::TrendingWindow;
 
 pub use constants::BASE_URL;
 pub use error::{MetastreamsError, Result};

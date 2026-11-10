@@ -19,4 +19,5 @@ The API these crates speak is documented at <https://docs.metastreams.io>. The A
 ## Releasing
 
 1. Bump `version` in the root `Cargo.toml` and add the section to `CHANGELOG.md`.
-2. Merge, then tag `vX.Y.Z` on `main` and push the tag. The release workflow checks the tag against the manifest, runs the tests and publishes the GitHub release with that changelog section.
+2. Run the live suite: `METASTREAMS_API_KEY=... cargo test -p metastreams-sdk --test live -- --ignored`. Every REST operation and every channel must pass.
+3. Merge, then tag `vX.Y.Z` on `main` and push the tag. The release workflow checks the tag against the manifest, runs the tests and publishes the GitHub release with that changelog section.

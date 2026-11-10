@@ -11,7 +11,7 @@ use crate::error::{ErrorDetail, FieldError};
 use crate::token::annotation::TokenAnnotation;
 use crate::token::funding::FundingSourceKind;
 use crate::token::graduation::GraduationStage;
-use crate::trade::{TradeDirection, TradeFlag, TraderSource};
+use crate::trade::{TradeDirection, TraderSource, WalletFilter};
 
 /// The EVM zero address, in [`MultiChainAddress`]'s canonical text.
 const EVM_ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
@@ -575,7 +575,7 @@ pub struct TradeFilter {
     pub platforms: Vec<String>,
     /// Trader classifications to keep.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub flags: Vec<TradeFlag>,
+    pub flags: Vec<WalletFilter>,
     /// What named the trader of an EVM trade. A Solana trade has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trader_sources: Vec<TraderSource>,
@@ -693,7 +693,7 @@ pub struct TradeExclude {
     pub wallets: Vec<MultiChainAddress>,
     /// Trader classifications to drop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub flags: Vec<TradeFlag>,
+    pub flags: Vec<WalletFilter>,
     /// Trading terminals to drop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub platforms: Vec<String>,
@@ -1157,7 +1157,7 @@ mod tests {
             "launchpads": ["pumpfun"],
             "anchors": ["usdc"],
             "platforms": ["axiom"],
-            "flags": ["kol", "fomoscan", "pro_trader"],
+            "flags": ["kol", "fomo", "pro_trader"],
             "traderSources": ["tx_origin"],
             "side": "sell",
             "volumeUsd": { "min": "100" },
@@ -1170,7 +1170,7 @@ mod tests {
         }))
         .expect("parses");
 
-        assert_eq!(parsed.flags, [TradeFlag::Kol, TradeFlag::Fomoscan, TradeFlag::ProTrader]);
+        assert_eq!(parsed.flags, [WalletFilter::Kol, WalletFilter::Fomo, WalletFilter::ProTrader]);
         assert_eq!(parsed.side, Some(TradeDirection::Sell));
         assert!(parsed.token.is_some());
         parsed.validate().expect("valid");
@@ -1188,14 +1188,6 @@ mod tests {
             let details = empty.validate().expect_err("empty").details.expect("details");
             assert_eq!(details[0]["field"], field);
         }
-    }
-
-    #[test]
-    fn fomo_and_fomoscan_are_two_trade_flags() {
-        let parsed: TradeFilter =
-            serde_json::from_value(serde_json::json!({ "flags": ["fomo", "fomoscan"] }))
-                .expect("parses");
-        assert_eq!(parsed.flags, [TradeFlag::Fomo, TradeFlag::Fomoscan]);
     }
 
     #[test]

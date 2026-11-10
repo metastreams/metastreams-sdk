@@ -832,7 +832,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "metastreams-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "metastreams-types",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "metastreams-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bs58",
  "rust_decimal",

@@ -3,11 +3,11 @@ resolver = "3"
 members  = ["metastreams-types", "metastreams-sdk"]
 
 [workspace.package]
-version      = "0.1.0"
+version      = "0.2.0"
 edition      = "2024"
 rust-version = "1.93"
 license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/tradeonapex/metastreams-sdk"
+repository   = "https://github.com/metastreams/metastreams-sdk"
 homepage     = "https://docs.metastreams.io"
 keywords     = ["metastreams", "market-data", "solana", "evm", "websocket"]
 categories   = ["api-bindings", "asynchronous"]
@@ -29,7 +29,7 @@ rust_2018_idioms              = { level = "deny", priority = -1 }
 unused_must_use               = "deny"
 
 [workspace.dependencies]
-metastreams-types = { path = "metastreams-types", version = "0.1.0" }
+metastreams-types = { path = "metastreams-types", version = "0.2.0" }
 
 bs58              = "0.5.1"
 futures           = "0.3.31"

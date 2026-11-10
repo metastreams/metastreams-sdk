@@ -17,8 +17,11 @@ Read <https://docs.metastreams.io> before changing anything here — every type 
 | `sort.rs` | The `SortOrder` copy |
 | `token/` | The token object, `UiSpotToken` and its groups; `pool.rs` holds its pools, `fees.rs` its trade fees, `platform.rs` `UiPlatform`, `annotation.rs` the `TokenAnnotation` copy, `funding.rs` the funding enum copies, `graduation.rs` the `GraduationStage` copy, and `holders.rs` `UiSpotHolder`, the holder list, the holders query and the `HolderPeriod` copy |
 | `candle.rs` | The OHLCV bucket, the candles response, the candles query, and the `Timeframe`, `CandleMetric` and `CandleDenomination` copies |
+| `native_price.rs` | The native price object, one chain's gas asset priced in USD, its list response, and its query |
 | `trade.rs` | `UiSpotTrade`, its page, both trade queries, the trader's identities, the `flags` filter kinds, the identity feed, and the `TradeDirection`, `WalletFlag` and `IdentitySource` copies |
+| `thesis.rs` | The thesis object, one social post about a token, with its author; its page, the theses query and its sort, the `ThesisSource` copy, and `ThesisSourceFilter`, the closed set of apps a query names |
 | `transfer.rs` | `UiSpotTransfer`, one movement of an asset between two wallets |
+| `trending.rs` | The trending request body, the ranked response, and the `TrendingWindow` copy |
 | `discovery/` | The Pulse columns, the request body, the ranked response, and the `SpotSortField` copy; `filters.rs` holds the `SpotTokenFilters` and `FilterRange` copies |
 | `search.rs` | The search query, its kinds and sorts, and the kind-tagged hits |
 | `error.rs` | `ErrorCode`, the `{error:{code,message,details?}}` envelope, and the marker that carries a detail through serde |
