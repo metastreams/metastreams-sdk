@@ -133,6 +133,7 @@ pub struct UiSpotHolder {
     /// The wallet's resolved identities, one element per source.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub identities: Vec<UiWalletIdentity>,
+    // The holder carries no `annotations`, because Metastreams never lists the Mayhem vault.
 }
 
 /// Balance-weighted entry and exit prices across a holder cohort.

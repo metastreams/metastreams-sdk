@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use crate::chain::{SpotChain, de};
 use crate::discovery::filters::SpotTokenFilters;
 use crate::sort::SortOrder;
-use crate::token::UiSpotToken;
+use crate::token::UiSpotPulseToken;
 
 /// Tokens a column carries when the request names no `limit`.
 pub const DEFAULT_COLUMN_LIMIT: u32 = 20;
@@ -76,7 +76,7 @@ pub struct SpotPulseColumnConfig {
     /// Ranked-set size, clamped to 1-100; 20 when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-    /// Filters over the column, before the stage floors merge in.
+    /// Filters over the column. They add to the column's own defaults and never loosen them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filters: Option<SpotTokenFilters>,
 }
@@ -146,11 +146,11 @@ impl PulseColumn {
 pub struct UiSpotPulseUpdate {
     /// Column these deltas apply to.
     pub column: PulseColumn,
-    /// The whole column, one entry per rank.
+    /// The rows to apply in order: the whole column at first, then only the rows that changed.
     pub deltas: Vec<UiSpotPulseDelta>,
 }
 
-/// One token's place within a column.
+/// One token's place on a ranked board.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UiSpotPulseDelta {
@@ -158,11 +158,32 @@ pub struct UiSpotPulseDelta {
     pub chain: SpotChain,
     /// Token address.
     pub address: String,
-    /// 1-indexed rank; `null` drops the token out of the column.
+    /// 1-indexed rank; `null` drops the token off the board.
     pub rank: Option<u32>,
     /// Token state; absent on eviction.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<UiSpotToken>,
+    pub data: Option<UiSpotPulseToken>,
+}
+
+impl UiSpotPulseDelta {
+    /// `token` placed at `rank`, with its whole state.
+    #[must_use]
+    pub fn whole(rank: u32, token: UiSpotPulseToken) -> Self {
+        let moved = Self::moved(rank, &token);
+        Self { data: Some(token), ..moved }
+    }
+
+    /// `token` moved to `rank`, without its state.
+    #[must_use]
+    pub fn moved(rank: u32, token: &UiSpotPulseToken) -> Self {
+        Self { rank: Some(rank), ..Self::evicted(token) }
+    }
+
+    /// `token` with no rank, which drops it off the column.
+    #[must_use]
+    pub fn evicted(token: &UiSpotPulseToken) -> Self {
+        Self { chain: token.chain, address: token.address.clone(), rank: None, data: None }
+    }
 }
 
 /// `POST /v1/discovery` response: one snapshot per requested column, in page order.

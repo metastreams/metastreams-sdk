@@ -18,9 +18,10 @@ async fn main() -> metastreams_sdk::Result<()> {
     let provider = MetastreamsProvider::new(key)?;
     let token = provider.token_details(SpotChain::Solana, &address).await?;
 
-    println!("{} ({}) on {}", token.name, token.symbol, token.chain);
-    println!("supply {} across {} pools", token.supply, token.pools.len());
-    for pool in &token.pools {
+    let card = &token.card;
+    println!("{} ({}) on {}", card.name, card.symbol, card.chain);
+    println!("supply {} across {} pools", token.supply, card.pools.len());
+    for pool in &card.pools {
         println!("  {pool:?}");
     }
     Ok(())

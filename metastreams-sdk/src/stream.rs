@@ -161,7 +161,9 @@ impl StreamConnection {
     }
 
     /// Opens one subscription and waits for its ack. Its first update is the next live change.
-    /// The stream sends no snapshot, so read the REST view after the ack.
+    /// The stream sends no snapshot, so read the REST view after the ack. `spot.trending` and
+    /// `spot.discovery` are the exceptions: each first sends its whole board. `spot.discovery`
+    /// sends it as one update per column.
     ///
     /// # Errors
     /// `Rejected` when the server refuses the filter or the key holds its most
@@ -593,7 +595,7 @@ mod tests {
     use metastreams_types::error::ErrorCode;
     use metastreams_types::filter::{Range, TokenFilter, TradeFilter};
     use metastreams_types::stream::{AckStatus, UiTokenExit};
-    use metastreams_types::trade::{TradeDirection, TradeFlag};
+    use metastreams_types::trade::{TradeDirection, WalletFilter};
 
     use crate::MetastreamsProvider;
 
@@ -714,7 +716,11 @@ mod tests {
 
     /// KOL trades of the tokens [`large_caps`] keeps.
     fn kol_trades() -> TradeFilter {
-        TradeFilter { flags: vec![TradeFlag::Kol], token: Some(large_caps()), ..Default::default() }
+        TradeFilter {
+            flags: vec![WalletFilter::Kol],
+            token: Some(large_caps()),
+            ..Default::default()
+        }
     }
 
     /// A `spot.tokens` payload for `MINT` with every required field.
@@ -735,6 +741,11 @@ mod tests {
             "symbol": "SOL",
             "decimals": 9,
             "supply": "1000000000",
+            "logo": {
+                "small": format!("https://cdn.click.trade/{MINT}_16x16.webp"),
+                "medium": format!("https://cdn.click.trade/{MINT}_60x60.webp"),
+                "large": format!("https://cdn.click.trade/{MINT}.webp"),
+            },
             "creator": WALLET,
             "devFunding": { "status": "unresolved" },
             "createdAt": AT,
@@ -870,12 +881,12 @@ mod tests {
             json!({ "chains": ["solana"], "marketCapUsd": { "min": "1000000" } })
         );
         let first = tokens.next().await.expect("an item").expect("a token");
-        assert!(matches!(&first, Event::Update(token) if token.address == MINT), "{first:?}");
+        assert!(matches!(&first, Event::Update(token) if token.card.address == MINT), "{first:?}");
         let gone = tokens.next().await.expect("an item").expect("an exit");
         let exit = UiTokenExit { chain: SpotChain::Solana, address: MINT.to_owned() };
         assert_eq!(gone, Event::Exit(exit));
         let again = tokens.next().await.expect("an item").expect("a token");
-        assert!(matches!(&again, Event::Update(token) if token.address == MINT), "{again:?}");
+        assert!(matches!(&again, Event::Update(token) if token.card.address == MINT), "{again:?}");
     }
 
     #[tokio::test]
@@ -982,7 +993,7 @@ mod tests {
         let Event::Update(first) = fast.next().await.expect("an item").expect("a candle");
         assert!((first.candle.open - 1.5).abs() < f64::EPSILON);
         let held = slow.next().await.expect("an item").expect("a token");
-        assert!(matches!(&held, Event::Update(token) if token.address == MINT), "{held:?}");
+        assert!(matches!(&held, Event::Update(token) if token.card.address == MINT), "{held:?}");
         let exit = Event::Exit(UiTokenExit { chain: SpotChain::Solana, address: MINT.to_owned() });
         for _ in 1..SUBSCRIPTION_BUFFER {
             assert_eq!(slow.next().await.expect("an item").expect("an exit"), exit);

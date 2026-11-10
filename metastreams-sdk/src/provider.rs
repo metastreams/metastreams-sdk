@@ -22,11 +22,14 @@ use metastreams_types::balance::{UiWalletBalances, WalletBalancesQuery};
 use metastreams_types::candle::{SpotCandlesQuery, UiCandlesResponse};
 use metastreams_types::chain::SpotChain;
 use metastreams_types::discovery::{SpotPulseSubscriptionConfig, UiSpotPulseResponse};
+use metastreams_types::native_price::{NativePricesQuery, UiNativePrices};
 use metastreams_types::position::{PositionsQuery, UiSpotPositions};
 use metastreams_types::session::{CreateSessionTokenRequest, UiSessionToken};
+use metastreams_types::thesis::{TokenThesesQuery, UiTokenTheses};
 use metastreams_types::token::UiSpotToken;
 use metastreams_types::token::holders::{TokenHoldersQuery, UiTokenHolderList};
 use metastreams_types::trade::{IdentityTradesQuery, TokenTradesQuery, UiSpotTrades};
+use metastreams_types::trending::{SpotTrendingFilter, UiSpotTrendingUpdate};
 
 use crate::constants::{BASE_URL, CONNECT_TIMEOUT, REQUEST_TIMEOUT};
 use crate::error::{MetastreamsError, Result, request_id};
@@ -137,6 +140,18 @@ impl MetastreamsProvider {
         self.send(self.client.get(url).query(query)).await
     }
 
+    /// One page of a token's theses, `GET /v1/tokens/{chain}/{address}/theses`.
+    #[instrument(skip(self))]
+    pub async fn token_theses(
+        &self,
+        chain: SpotChain,
+        address: &MultiChainAddress,
+        query: &TokenThesesQuery,
+    ) -> Result<UiTokenTheses> {
+        let url = self.url(&format!("v1/tokens/{chain}/{address}/theses"));
+        self.send(self.client.get(url).query(query)).await
+    }
+
     /// One page of an identity feed's trades across every token, newest first, `GET /v1/trades`.
     #[instrument(skip(self))]
     pub async fn identity_trades(&self, query: &IdentityTradesQuery) -> Result<UiSpotTrades> {
@@ -149,6 +164,13 @@ impl MetastreamsProvider {
     pub async fn wallet_balances(&self, query: &WalletBalancesQuery) -> Result<UiWalletBalances> {
         let query = WalletBalancesQuery { chains: known_chains(&query.chains), ..query.clone() };
         self.send(self.client.get(self.url("v1/wallets/balances")).query(&query)).await
+    }
+
+    /// The newest USD price of each chain's gas asset, `GET /v1/native-prices`.
+    #[instrument(skip(self))]
+    pub async fn native_prices(&self, query: &NativePricesQuery) -> Result<UiNativePrices> {
+        let query = NativePricesQuery { chains: known_chains(&query.chains) };
+        self.send(self.client.get(self.url("v1/native-prices")).query(&query)).await
     }
 
     /// One page of the named wallets' positions, `GET /v1/positions`.
@@ -166,6 +188,15 @@ impl MetastreamsProvider {
         request: &SpotPulseSubscriptionConfig,
     ) -> Result<UiSpotPulseResponse> {
         self.send(self.client.post(self.url("v1/discovery")).json(request)).await
+    }
+
+    /// The tokens ranked by trending score over every requested chain, `POST /v1/trending`.
+    #[instrument(skip(self))]
+    pub async fn trending_board(
+        &self,
+        request: &SpotTrendingFilter,
+    ) -> Result<UiSpotTrendingUpdate> {
+        self.send(self.client.post(self.url("v1/trending")).json(request)).await
     }
 
     /// A session token for one browser or app user, `POST /v1/session-tokens`.
@@ -255,8 +286,10 @@ mod tests {
     use metastreams_types::error::ErrorCode;
     use metastreams_types::position::{Lifecycle, PositionSort, PositionSortKey};
     use metastreams_types::sort::SortOrder;
+    use metastreams_types::thesis::{ThesisSortKey, ThesisSource, ThesisSourceFilter};
     use metastreams_types::token::holders::HolderPeriod;
     use metastreams_types::trade::{IdentityFeed, WalletFilter};
+    use metastreams_types::trending::TrendingWindow;
 
     const KEY: &str = "meta_test";
     const MINT: &str = "So11111111111111111111111111111111111111112";
@@ -336,11 +369,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_token_theses_read_sends_its_filters_and_keeps_a_thesis_from_an_unnamed_app() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/v1/tokens/solana/{MINT}/theses")))
+            .and(header("authorization", format!("Bearer {KEY}")))
+            .and(query_param("sources", "fomo,axiom"))
+            .and(query_param("minPositionUsd", "1000"))
+            .and(query_param("sortBy", "positionUsd"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "theses": [{
+                    "source": "newapp", "thesisId": "p-1", "parentId": null, "postedAt": 1,
+                    "text": "gm", "likeCount": 0,
+                    "author": {
+                        "id": "u-1", "handle": "cooker", "displayName": null, "avatarUrl": null,
+                        "verified": false, "isDev": false, "twitterUsername": null,
+                    },
+                    "wallet": null, "positionUsd": "0", "tokenAmount": "0",
+                    "unrealizedPnlUsd": null, "unrealizedPnlPct": null, "realizedPnlUsd": null,
+                    "costBasisUsd": null, "calledOutAtMarketCapUsd": null, "multiple": null,
+                    "closedAt": null, "authorPosition": null,
+                }],
+                "nextCursor": null,
+                "hasMore": false,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let query = TokenThesesQuery {
+            sources: Some(vec![ThesisSourceFilter::Fomo, ThesisSourceFilter::Axiom]),
+            min_position_usd: Some("1000".parse().expect("a decimal")),
+            sort_by: Some(ThesisSortKey::PositionUsd),
+            ..TokenThesesQuery::default()
+        };
+        let page =
+            provider(&server).token_theses(SpotChain::Solana, &mint(), &query).await.expect("page");
+
+        assert_eq!(page.theses[0].source, ThesisSource::Unknown);
+        assert!(!page.has_more);
+    }
+
+    #[tokio::test]
     async fn an_identity_read_joins_its_chains() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/trades"))
-            .and(query_param("identity", "fomoscan"))
+            .and(query_param("identity", "fomo"))
             .and(query_param("chains", "solana,base"))
             .respond_with(ResponseTemplate::new(200).set_body_json(empty_page()))
             .expect(1)
@@ -459,6 +534,28 @@ mod tests {
         let board = provider(&server).discovery_board(&request).await.expect("board");
 
         assert!(board.columns.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_trending_read_posts_the_request_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/trending"))
+            .and(body_json(json!({ "chains": ["solana"], "window": "1h", "limit": 5 })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "deltas": [] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let request = SpotTrendingFilter {
+            chains: vec![SpotChain::Solana],
+            window: TrendingWindow::OneHour,
+            limit: Some(5),
+            filters: None,
+        };
+        let board = provider(&server).trending_board(&request).await.expect("board");
+
+        assert!(board.deltas.is_empty());
     }
 
     #[tokio::test]

@@ -26,6 +26,20 @@ use crate::token::pool::UiTokenPool;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UiSpotToken {
+    /// The token's market state.
+    #[serde(flatten)]
+    pub card: UiSpotPulseToken,
+    /// Token decimals.
+    pub decimals: u8,
+    /// Total supply.
+    #[schema(value_type = Decimal, examples("1000000000"))]
+    pub supply: Decimal,
+}
+
+/// A token's market state, without its decimals and supply. A discovery column serves it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UiSpotPulseToken {
     /// Chain the token trades on.
     pub chain: SpotChain,
     /// Token address.
@@ -34,11 +48,8 @@ pub struct UiSpotToken {
     pub name: String,
     /// Token symbol.
     pub symbol: String,
-    /// Token decimals.
-    pub decimals: u8,
-    /// Total supply.
-    #[schema(value_type = Decimal, examples("1000000000"))]
-    pub supply: Decimal,
+    /// Token artwork on the image CDN.
+    pub logo: UiTokenLogo,
     /// Creator address.
     pub creator: String,
     /// The creator wallet's first inbound funding. Always present; its status says whether the
@@ -64,7 +75,7 @@ pub struct UiSpotToken {
     #[serde(default)]
     pub pools: Vec<UiTokenPool>,
 
-    /// Address of the quote asset in the token's deepest pool; `null` on a row an earlier build wrote.
+    /// Address of the quote asset in the token's deepest pool; `null` where it is not known.
     pub anchor_address: Option<String>,
     /// Display symbol of that quote asset, on `anchorAddress`'s terms.
     pub anchor_symbol: Option<String>,
@@ -102,6 +113,27 @@ pub struct UiSpotToken {
     pub updated_at: UnixMilliseconds,
 }
 
+/// A token's artwork on the image CDN, one URL per size. Each answers 404 while the CDN holds no
+/// artwork for the token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct UiTokenLogo {
+    /// 16×16 pixels, for inline icons.
+    #[schema(examples(
+        "https://cdn.click.trade/So11111111111111111111111111111111111111112_16x16.webp"
+    ))]
+    pub small: String,
+    /// 60×60 pixels, for list rows.
+    #[schema(examples(
+        "https://cdn.click.trade/So11111111111111111111111111111111111111112_60x60.webp"
+    ))]
+    pub medium: String,
+    /// The artwork at full size.
+    #[schema(examples(
+        "https://cdn.click.trade/So11111111111111111111111111111111111111112.webp"
+    ))]
+    pub large: String,
+}
+
 /// The creator wallet's first inbound funding.
 ///
 /// `status` separates a lookup still in flight from one that settled on a wallet with no
@@ -117,6 +149,11 @@ pub struct UiDevFunding {
     pub source_kind: Option<FundingSourceKind>,
     /// Display label for the funder, e.g. an exchange name.
     pub source_label: Option<String>,
+    /// Amount the first funding moved, in the chain's native asset.
+    #[schema(value_type = Option<Decimal>, examples("2.5"))]
+    pub amount: Option<Decimal>,
+    /// When the first funding executed.
+    pub funded_at: Option<UnixMilliseconds>,
 }
 
 /// All-time-high price and market cap, each with the timestamp it was set.
@@ -186,7 +223,7 @@ pub struct UiTokenTotals {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UiTokenFees {
-    /// Transaction fees. Solana trades older than the venue leg carry their venue fee here.
+    /// Transaction fees. On some older Solana trades, this also holds the venue fee.
     pub transaction: UiMoney,
     /// Validator fees.
     pub validator: UiMoney,
@@ -227,8 +264,8 @@ pub struct UiTokenHolders {
     /// Phishing wallets' share of supply.
     #[schema(value_type = Decimal, examples("0.1"))]
     pub phishing_pct: Decimal,
-    /// Wallets that ever traded this token while carrying a malicious-actor label. Never
-    /// decremented, unlike `phishing_pct`.
+    /// Wallets that ever traded this token while carrying a malicious-actor label. The count
+    /// never falls, unlike `phishingPct`.
     pub phishing_count: u64,
     /// Fresh-wallet share of supply.
     #[schema(value_type = Decimal, examples("5.0"))]
@@ -246,7 +283,7 @@ pub struct UiTokenHolders {
     /// Pro-trader wallet count.
     pub pro_trader_count: u64,
     /// Share of current holders a known exchange funded, 0-100. Counted against every holder,
-    /// so a token the resolver has not caught up on reads low rather than absent.
+    /// so a token with funding lookups still in flight reads low rather than absent.
     #[schema(value_type = Decimal, examples("18.0"))]
     pub funded_by_cex_pct: Decimal,
 }
@@ -308,8 +345,8 @@ pub struct UiTokenMetadata {
     pub telegram: Option<String>,
     /// Project Discord invite URL.
     pub discord: Option<String>,
-    /// How many other tokens have claimed the same Twitter/X account. Above zero, the handle
-    /// is recycled, which is the scam signal it exists to carry.
+    /// How many other tokens have claimed the same Twitter/X account; above zero, the handle
+    /// is recycled. Not yet counted, so always `0`.
     // The token view stores the handle but never counts its reuse.
     pub twitter_reuse_count: u64,
 }

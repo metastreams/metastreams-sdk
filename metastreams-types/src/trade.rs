@@ -177,15 +177,12 @@ pub enum IdentityFeed {
     /// Trades by a curated KOL wallet.
     Kol,
     /// Trades by a wallet resolved to a fomo.family identity.
-    #[serde(rename = "fomoscan")]
-    #[strum(serialize = "fomoscan")]
     Fomo,
 }
 
-/// A wallet classification a trade or holder read narrows to.
-///
-/// The full classification set, less the two kinds that read a signed-in user's
-/// wallets (`watchlist`, `own`): the API has no user, so it has no wallet sets.
+/// A wallet classification a trade or holder filter selects on.
+// The full classification set, less the two kinds that read a signed-in user's
+// wallets (`watchlist`, `own`): the API has no user, so it has no wallet sets.
 #[derive(
     Debug,
     Clone,
@@ -218,8 +215,7 @@ pub enum WalletFilter {
     Kol,
     /// Rows carrying [`WalletFlag::ProTrader`].
     ProTrader,
-    /// Trades routed through the fomo.family terminal, or holders whose wallet has traded through
-    /// it. Not wallets holding a fomo identity.
+    /// Rows carrying [`WalletFlag::Fomo`].
     Fomo,
     /// Rows carrying [`WalletFlag::Phishing`].
     Phishing,
@@ -263,11 +259,13 @@ pub enum WalletFlag {
     ProTrader,
     /// System or infrastructure account: a program PDA, DEX authority, fee recipient, or bot vault.
     System,
-    /// Wallet currently holds this token from a fomo trade.
+    /// Wallet has traded through the fomo.family terminal.
     Fomo,
     /// Wallet a security source names as a malicious actor: phishing, scamming, rug pulling or
     /// hacking.
     Phishing,
+    /// Wallet listed for sale on a wallet marketplace; the flag stays under the buyer.
+    Marketplace,
 }
 
 /// Who resolved an identity.
@@ -276,8 +274,7 @@ pub enum WalletFlag {
 pub enum IdentitySource {
     /// Codex's aggregate wallet profile.
     Codex,
-    /// A fomo.family profile, resolved through FomoScan.
-    #[serde(rename = "fomo", alias = "fomoscan")]
+    /// A fomo.family profile.
     Fomo,
     /// A pump.fun profile.
     Pump,
@@ -285,6 +282,8 @@ pub enum IdentitySource {
     Gmgn,
     /// An Axiom-native call-out author.
     Axiom,
+    /// An Arkham Intel label or entity.
+    Arkham,
     /// A source this build does not name. A reader skips its element rather than fail the row.
     #[serde(other)]
     Unknown,
@@ -310,37 +309,31 @@ pub enum TraderSource {
     RelayCaller,
     /// The account that calls the pool for the wallet.
     PoolCaller,
-}
-
-/// A trader classification a `spot.trades` filter keeps or drops.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumIter, EnumString,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum TradeFlag {
-    /// The token's creator.
-    Dev,
-    /// [`WalletFlag::Sniper`].
-    Sniper,
-    /// [`WalletFlag::Insider`].
-    Insider,
-    /// [`WalletFlag::Bundler`].
-    Bundler,
-    /// [`WalletFlag::Fresh`].
-    Fresh,
-    /// [`WalletFlag::Whale`].
-    Whale,
-    /// [`WalletFlag::Kol`].
-    Kol,
-    /// [`WalletFlag::Fomo`].
-    Fomo,
-    /// A trader resolved to a fomo.family identity.
-    Fomoscan,
-    /// [`WalletFlag::ProTrader`].
-    ProTrader,
-    /// [`WalletFlag::Phishing`].
-    Phishing,
+    /// The account that paid the input and received the output, net across the transaction.
+    NetPrincipal,
+    /// The transaction sender, where it paid the input or received the output.
+    NetSender,
+    /// The account that paid the input. No account both paid and received, and the sender is not
+    /// a party.
+    NetPayer,
+    /// The transaction sender, published because no account paid the input or several accounts
+    /// tie.
+    Unresolved,
+    /// The transaction sender, credited for a route that starts and ends in one token.
+    CycleSender,
+    /// The transaction sender, credited where the route's output reached another account as native
+    /// coin.
+    NativeOutSender,
+    /// The transaction sender, credited because a contract it called paid the input.
+    ContractCaller,
+    /// The account whose holding of the traded token changed most, where an EOA paid the input for
+    /// it.
+    NetHolder,
+    /// The one account that kept the output, where no account paid the input and the sender is
+    /// not a party.
+    NetReceiver,
+    /// The account that paid the input out of what the input token's own contract sent it.
+    TokenFunded,
 }
 
 /// `limit`, or the default when absent, clamped to `1..=`[`TRADES_LIMIT_MAX`].
@@ -354,6 +347,7 @@ fn trades_limit(limit: Option<u32>) -> u32 {
 /// derived schema, so a new variant cannot leave them stale.
 pub(crate) fn open_wallet_flags() -> Array {
     ArrayBuilder::new()
+        .description(Some("Classifications the wallet carries."))
         .items(open_enumeration(
             "A flag the classifier put on the wallet. This is an open enumeration: \
              the classifier learns new flags, so keep a value you do not recognize.",
@@ -402,9 +396,9 @@ mod tests {
     }
 
     #[test]
-    fn the_identity_feed_takes_the_fomoscan_spelling() {
+    fn the_identity_feed_parses_its_names() {
         let query: IdentityTradesQuery =
-            serde_json::from_value(serde_json::json!({ "identity": "fomoscan" })).expect("parses");
+            serde_json::from_value(serde_json::json!({ "identity": "fomo" })).expect("parses");
         assert_eq!(query.identity, IdentityFeed::Fomo);
         assert_eq!(IdentityFeed::iter().count(), 2);
     }

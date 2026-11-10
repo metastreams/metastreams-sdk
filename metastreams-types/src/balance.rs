@@ -94,6 +94,8 @@ pub enum DepositAsset {
     Usdg,
     /// Polymarket pUSD trading collateral on Polygon (USDC.e wrapped 1:1).
     Pusd,
+    /// Hyperliquid's HYPE, Elysium's native gas token.
+    Hype,
 }
 
 /// What caused a wallet's balance to change.

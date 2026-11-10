@@ -8,12 +8,11 @@ use crate::time::UnixMilliseconds;
 
 /// A platform attached to a token, a wallet, or a trade.
 ///
-/// The fieldless variants are trading terminals. Each doc gives the producer string its
-/// variant maps from.
+/// The fieldless variants are trading terminals, each described by its display name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, EnumIter)]
 #[serde(tag = "platform", rename_all = "camelCase")]
 pub enum UiPlatform {
-    /// fomo.family, the terminal that routed the trade. The trader's profile is the `fomoscan`
+    /// fomo.family, the terminal that routed the trade. The trader's profile is the `fomo`
     /// element of `identities`.
     Fomo,
     /// A token's DexScreener listing; present only while its profile is paid.
@@ -36,7 +35,8 @@ pub enum UiPlatform {
     BtcTurk,
     /// BullX.
     BullX,
-    /// Click, identified by its fee vault.
+    /// Click's own router.
+    // Identified by its fee vault.
     Click,
     /// "GMGN".
     Gmgn,

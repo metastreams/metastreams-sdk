@@ -25,6 +25,6 @@ pub struct UiTokenPool {
 pub struct UiPoolQuote {
     /// Quote asset's address.
     pub address: String,
-    /// Quote asset's display symbol; `null` where the registry names none.
+    /// Quote asset's display symbol; `null` where none is known.
     pub symbol: Option<String>,
 }

@@ -282,8 +282,8 @@ pub struct UiPositionToken {
     pub symbol: Option<String>,
     /// Token name.
     pub name: Option<String>,
-    /// Token image URL, as stored.
-    pub image: Option<String>,
+    /// Token artwork URL.
+    pub logo_url: Option<String>,
     /// Token decimals.
     pub decimals: Option<u8>,
     /// Current price.

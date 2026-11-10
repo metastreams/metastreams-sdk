@@ -46,7 +46,8 @@ where
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 // Published schema name; generated clients key on it.
 #[schema(as = DiscoveryTokenFilters)]
-#[serde(rename_all = "camelCase")]
+// The parse refuses an unknown key, so a misspelt key cannot widen a board.
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SpotTokenFilters {
     /// Filter by token launch protocol (e.g., pumpfun, moonit, boop). The value `mayhem_mode`
     /// selects Pump.fun Mayhem Mode tokens instead. The list is a union.
@@ -174,6 +175,16 @@ mod tests {
         .expect_err("inverted");
 
         assert_eq!(error.to_string(), "min must be less than or equal to max");
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused() {
+        let error = serde_json::from_value::<SpotTokenFilters>(serde_json::json!({
+            "marketCap": { "min": "1000000" },
+        }))
+        .expect_err("unknown key");
+
+        assert!(error.to_string().starts_with("unknown field `marketCap`"), "{error}");
     }
 
     #[test]

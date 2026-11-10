@@ -39,6 +39,8 @@ pub enum SpotChain {
     Robinhood,
     /// Arc mainnet (EVM L1). Native gas token is USDC.
     Arc,
+    /// Elysium mainnet (Arbitrum Orbit L2 on HyperEVM). Native gas token is HYPE.
+    Elysium,
 }
 
 impl SpotChain {
@@ -47,7 +49,9 @@ impl SpotChain {
     pub fn address_family(&self) -> AddressFamily {
         match self {
             Self::Solana => AddressFamily::Solana,
-            Self::Base | Self::Bsc | Self::Robinhood | Self::Arc => AddressFamily::Evm,
+            Self::Base | Self::Bsc | Self::Robinhood | Self::Arc | Self::Elysium => {
+                AddressFamily::Evm
+            }
         }
     }
 }
