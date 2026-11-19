@@ -31,14 +31,10 @@ pub enum SpotChain {
     /// Solana mainnet.
     #[default]
     Solana,
-    /// Base mainnet (EVM).
-    Base,
     /// BNB Smart Chain (EVM).
     Bsc,
     /// Robinhood Chain mainnet (EVM L2).
     Robinhood,
-    /// Arc mainnet (EVM L1). Native gas token is USDC.
-    Arc,
     /// Elysium mainnet (Arbitrum Orbit L2 on HyperEVM). Native gas token is HYPE.
     Elysium,
 }
@@ -49,9 +45,7 @@ impl SpotChain {
     pub fn address_family(&self) -> AddressFamily {
         match self {
             Self::Solana => AddressFamily::Solana,
-            Self::Base | Self::Bsc | Self::Robinhood | Self::Arc | Self::Elysium => {
-                AddressFamily::Evm
-            }
+            Self::Bsc | Self::Robinhood | Self::Elysium => AddressFamily::Evm,
         }
     }
 }

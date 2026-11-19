@@ -19,17 +19,18 @@ use url::Url;
 
 use metastreams_types::address::MultiChainAddress;
 use metastreams_types::balance::{UiWalletBalances, WalletBalancesQuery};
-use metastreams_types::candle::{SpotCandlesQuery, UiCandlesResponse};
+use metastreams_types::candle::{CandleSeriesQuery, UiCandleSeries};
 use metastreams_types::chain::SpotChain;
-use metastreams_types::discovery::{SpotPulseSubscriptionConfig, UiSpotPulseResponse};
-use metastreams_types::native_price::{NativePricesQuery, UiNativePrices};
+use metastreams_types::discovery::{SpotPulseSubscriptionConfig, UiSpotPulseUpdate};
+use metastreams_types::native_price::{NativePricesQuery, UiNativePrice};
+use metastreams_types::portfolio::{PortfolioQuery, UiPortfolioResponse};
 use metastreams_types::position::{PositionsQuery, UiSpotPositions};
 use metastreams_types::session::{CreateSessionTokenRequest, UiSessionToken};
 use metastreams_types::thesis::{TokenThesesQuery, UiTokenTheses};
-use metastreams_types::token::UiSpotToken;
-use metastreams_types::token::holders::{TokenHoldersQuery, UiTokenHolderList};
-use metastreams_types::trade::{IdentityTradesQuery, TokenTradesQuery, UiSpotTrades};
-use metastreams_types::trending::{SpotTrendingFilter, UiSpotTrendingUpdate};
+use metastreams_types::token::holders::{HolderSeriesQuery, UiHolderSeries};
+use metastreams_types::token::{TokensQuery, UiSpotToken};
+use metastreams_types::trade::{TradesQuery, UiSpotTrades};
+use metastreams_types::trending::{SpotTrendingFilter, UiSpotTrendingDelta};
 
 use crate::constants::{BASE_URL, CONNECT_TIMEOUT, REQUEST_TIMEOUT};
 use crate::error::{MetastreamsError, Result, request_id};
@@ -93,51 +94,32 @@ impl MetastreamsProvider {
         Ok(StreamConnection::spawn(socket))
     }
 
-    /// One token, `GET /v1/tokens/{chain}/{address}`; a missing token is `Api` with `NOT_FOUND`.
+    /// Each named token on each chain in scope, `GET /v1/tokens`.
     #[instrument(skip(self))]
-    pub async fn token_details(
-        &self,
-        chain: SpotChain,
-        address: &MultiChainAddress,
-    ) -> Result<UiSpotToken> {
-        let url = self.url(&format!("v1/tokens/{chain}/{address}"));
-        self.send(self.client.get(url)).await
+    pub async fn tokens(&self, query: &TokensQuery) -> Result<Vec<UiSpotToken>> {
+        let query = TokensQuery { chains: known_chains(&query.chains), ..query.clone() };
+        self.send(self.client.get(self.url("v1/tokens")).query(&query)).await
     }
 
-    /// A token's candles, oldest first, `GET /v1/tokens/{chain}/{address}/ohlcv`.
+    /// Each named token's candles, oldest first, `GET /v1/ohlcv`.
     #[instrument(skip(self))]
-    pub async fn token_ohlcv(
-        &self,
-        chain: SpotChain,
-        address: &MultiChainAddress,
-        query: &SpotCandlesQuery,
-    ) -> Result<UiCandlesResponse> {
-        let url = self.url(&format!("v1/tokens/{chain}/{address}/ohlcv"));
-        self.send(self.client.get(url).query(query)).await
+    pub async fn ohlcv(&self, query: &CandleSeriesQuery) -> Result<Vec<UiCandleSeries>> {
+        let query = CandleSeriesQuery { chains: known_chains(&query.chains), ..query.clone() };
+        self.send(self.client.get(self.url("v1/ohlcv")).query(&query)).await
     }
 
-    /// One page of a token's trades, newest first, `GET /v1/tokens/{chain}/{address}/trades`.
+    /// One page of trades, newest first: the named tokens', wallets' or identity's, `GET /v1/trades`.
     #[instrument(skip(self))]
-    pub async fn token_trades(
-        &self,
-        chain: SpotChain,
-        address: &MultiChainAddress,
-        query: &TokenTradesQuery,
-    ) -> Result<UiSpotTrades> {
-        let url = self.url(&format!("v1/tokens/{chain}/{address}/trades"));
-        self.send(self.client.get(url).query(query)).await
+    pub async fn trades(&self, query: &TradesQuery) -> Result<UiSpotTrades> {
+        let query = TradesQuery { chains: known_chains(&query.chains), ..query.clone() };
+        self.send(self.client.get(self.url("v1/trades")).query(&query)).await
     }
 
-    /// A token's current holders, largest balance first, `GET /v1/tokens/{chain}/{address}/holders`.
+    /// Each named token's current holders, largest balance first, `GET /v1/holders`.
     #[instrument(skip(self))]
-    pub async fn token_holders(
-        &self,
-        chain: SpotChain,
-        address: &MultiChainAddress,
-        query: &TokenHoldersQuery,
-    ) -> Result<UiTokenHolderList> {
-        let url = self.url(&format!("v1/tokens/{chain}/{address}/holders"));
-        self.send(self.client.get(url).query(query)).await
+    pub async fn holders(&self, query: &HolderSeriesQuery) -> Result<Vec<UiHolderSeries>> {
+        let query = HolderSeriesQuery { chains: known_chains(&query.chains), ..query.clone() };
+        self.send(self.client.get(self.url("v1/holders")).query(&query)).await
     }
 
     /// One page of a token's theses, `GET /v1/tokens/{chain}/{address}/theses`.
@@ -152,23 +134,23 @@ impl MetastreamsProvider {
         self.send(self.client.get(url).query(query)).await
     }
 
-    /// One page of an identity feed's trades across every token, newest first, `GET /v1/trades`.
-    #[instrument(skip(self))]
-    pub async fn identity_trades(&self, query: &IdentityTradesQuery) -> Result<UiSpotTrades> {
-        let query = IdentityTradesQuery { chains: known_chains(&query.chains), ..query.clone() };
-        self.send(self.client.get(self.url("v1/trades")).query(&query)).await
-    }
-
-    /// The latest balance of each named wallet, per chain and asset, `GET /v1/wallets/balances`.
+    /// The latest balance of each named wallet, per chain and asset, `GET /v1/balances`.
     #[instrument(skip(self))]
     pub async fn wallet_balances(&self, query: &WalletBalancesQuery) -> Result<UiWalletBalances> {
         let query = WalletBalancesQuery { chains: known_chains(&query.chains), ..query.clone() };
-        self.send(self.client.get(self.url("v1/wallets/balances")).query(&query)).await
+        self.send(self.client.get(self.url("v1/balances")).query(&query)).await
+    }
+
+    /// The summed spot holdings of the named wallets, `GET /v1/portfolio`.
+    #[instrument(skip(self))]
+    pub async fn wallet_portfolio(&self, query: &PortfolioQuery) -> Result<UiPortfolioResponse> {
+        let query = PortfolioQuery { chains: known_chains(&query.chains), ..query.clone() };
+        self.send(self.client.get(self.url("v1/portfolio")).query(&query)).await
     }
 
     /// The newest USD price of each chain's gas asset, `GET /v1/native-prices`.
     #[instrument(skip(self))]
-    pub async fn native_prices(&self, query: &NativePricesQuery) -> Result<UiNativePrices> {
+    pub async fn native_prices(&self, query: &NativePricesQuery) -> Result<Vec<UiNativePrice>> {
         let query = NativePricesQuery { chains: known_chains(&query.chains) };
         self.send(self.client.get(self.url("v1/native-prices")).query(&query)).await
     }
@@ -186,7 +168,7 @@ impl MetastreamsProvider {
     pub async fn discovery_board(
         &self,
         request: &SpotPulseSubscriptionConfig,
-    ) -> Result<UiSpotPulseResponse> {
+    ) -> Result<Vec<UiSpotPulseUpdate>> {
         self.send(self.client.post(self.url("v1/discovery")).json(request)).await
     }
 
@@ -195,7 +177,7 @@ impl MetastreamsProvider {
     pub async fn trending_board(
         &self,
         request: &SpotTrendingFilter,
-    ) -> Result<UiSpotTrendingUpdate> {
+    ) -> Result<Vec<UiSpotTrendingDelta>> {
         self.send(self.client.post(self.url("v1/trending")).json(request)).await
     }
 
@@ -284,11 +266,12 @@ mod tests {
     use metastreams_types::candle::Timeframe;
     use metastreams_types::discovery::SpotPulseColumnConfig;
     use metastreams_types::error::ErrorCode;
+    use metastreams_types::portfolio::PortfolioInclude;
     use metastreams_types::position::{Lifecycle, PositionSort, PositionSortKey};
     use metastreams_types::sort::SortOrder;
     use metastreams_types::thesis::{ThesisSortKey, ThesisSource, ThesisSourceFilter};
     use metastreams_types::token::holders::HolderPeriod;
-    use metastreams_types::trade::{IdentityFeed, WalletFilter};
+    use metastreams_types::trade::{IdentityFeed, TradeDirection, WalletFilter};
     use metastreams_types::trending::TrendingWindow;
 
     const KEY: &str = "meta_test";
@@ -298,8 +281,8 @@ mod tests {
         MINT.parse().expect("a valid mint")
     }
 
-    fn kol() -> IdentityTradesQuery {
-        IdentityTradesQuery { identity: IdentityFeed::Kol, chains: None, limit: None, cursor: None }
+    fn kol() -> TradesQuery {
+        TradesQuery { identity: Some(IdentityFeed::Kol), ..TradesQuery::default() }
     }
 
     fn empty_page() -> serde_json::Value {
@@ -311,11 +294,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_token_trades_read_sends_the_key_and_its_flags() {
+    async fn a_token_trades_read_sends_the_key_its_tokens_and_its_flags() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path(format!("/v1/tokens/solana/{MINT}/trades")))
+            .and(path("/v1/trades"))
             .and(header("authorization", format!("Bearer {KEY}")))
+            .and(query_param("tokens", MINT))
             .and(query_param("limit", "50"))
             .and(query_param("flags", "bundler,pro_trader"))
             .respond_with(ResponseTemplate::new(200).set_body_json(empty_page()))
@@ -323,49 +307,73 @@ mod tests {
             .mount(&server)
             .await;
 
-        let query = TokenTradesQuery {
+        let query = TradesQuery {
+            tokens: Some(vec![mint()]),
             limit: Some(50),
             flags: Some(vec![WalletFilter::Bundler, WalletFilter::ProTrader]),
-            ..TokenTradesQuery::default()
+            ..TradesQuery::default()
         };
-        let page =
-            provider(&server).token_trades(SpotChain::Solana, &mint(), &query).await.expect("page");
+        let page = provider(&server).trades(&query).await.expect("page");
 
         assert!(page.trades.is_empty());
         assert!(!page.has_more);
     }
 
     #[tokio::test]
-    async fn a_token_holders_read_sends_the_key_its_flags_and_its_period() {
+    async fn a_wallet_trades_read_sends_its_wallets_side_and_tokens() {
+        let wallet = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path(format!("/v1/tokens/solana/{MINT}/holders")))
-            .and(header("authorization", format!("Bearer {KEY}")))
-            .and(query_param("limit", "50"))
-            .and(query_param("flags", "bundler,insider"))
-            .and(query_param("period", "cycle"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "holders": [],
-                "holderCount": 0,
-                "top10": { "avgEntryPrice": null, "avgExitPrice": null },
-            })))
+            .and(path("/v1/trades"))
+            .and(query_param("wallets", wallet))
+            .and(query_param("side", "sell"))
+            .and(query_param("tokens", MINT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(empty_page()))
             .expect(1)
             .mount(&server)
             .await;
 
-        let query = TokenHoldersQuery {
+        let query = TradesQuery {
+            wallets: Some(vec![wallet.parse().expect("a wallet")]),
+            tokens: Some(vec![mint()]),
+            side: Some(TradeDirection::Sell),
+            ..TradesQuery::default()
+        };
+        provider(&server).trades(&query).await.expect("page");
+    }
+
+    #[tokio::test]
+    async fn a_holders_read_sends_the_key_its_tokens_flags_and_period() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/holders"))
+            .and(header("authorization", format!("Bearer {KEY}")))
+            .and(query_param("tokens", MINT))
+            .and(query_param("limit", "50"))
+            .and(query_param("flags", "bundler,insider"))
+            .and(query_param("period", "cycle"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "chain": "solana",
+                "address": MINT,
+                "holders": [],
+                "holderCount": 0,
+                "top10": { "avgEntryPrice": null, "avgExitPrice": null },
+            }])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let query = HolderSeriesQuery {
+            tokens: vec![mint()],
+            chains: None,
             limit: Some(50),
             flags: Some(vec![WalletFilter::Bundler, WalletFilter::Insider]),
             period: Some(HolderPeriod::Cycle),
-            ..TokenHoldersQuery::default()
         };
-        let list = provider(&server)
-            .token_holders(SpotChain::Solana, &mint(), &query)
-            .await
-            .expect("a holder list");
+        let list = provider(&server).holders(&query).await.expect("a holder list");
 
-        assert!(list.holders.is_empty());
-        assert_eq!(list.holder_count, 0);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].holder_count, 0);
     }
 
     #[tokio::test]
@@ -416,18 +424,18 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/v1/trades"))
             .and(query_param("identity", "fomo"))
-            .and(query_param("chains", "solana,base"))
+            .and(query_param("chains", "solana,bsc"))
             .respond_with(ResponseTemplate::new(200).set_body_json(empty_page()))
             .expect(1)
             .mount(&server)
             .await;
 
-        let query = IdentityTradesQuery {
-            identity: IdentityFeed::Fomo,
-            chains: Some(vec![SpotChain::Solana, SpotChain::Base]),
+        let query = TradesQuery {
+            identity: Some(IdentityFeed::Fomo),
+            chains: Some(vec![SpotChain::Solana, SpotChain::Bsc]),
             ..kol()
         };
-        provider(&server).identity_trades(&query).await.expect("page");
+        provider(&server).trades(&query).await.expect("page");
     }
 
     #[tokio::test]
@@ -442,7 +450,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        provider(&server).identity_trades(&kol()).await.expect("page");
+        provider(&server).trades(&kol()).await.expect("page");
     }
 
     #[tokio::test]
@@ -451,10 +459,10 @@ mod tests {
         let every_chain: Vec<String> = SpotChain::iter().map(|chain| chain.to_string()).collect();
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/v1/wallets/balances"))
+            .and(path("/v1/balances"))
             .and(query_param("wallets", wallet))
             .and(query_param("chains", every_chain.join(",")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "balances": [] })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .expect(1)
             .mount(&server)
             .await;
@@ -463,7 +471,40 @@ mod tests {
             WalletBalancesQuery { wallets: vec![wallet.parse().expect("a wallet")], chains: None };
         let balances = provider(&server).wallet_balances(&query).await.expect("balances");
 
-        assert!(balances.balances.is_empty());
+        assert!(balances.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_portfolio_read_sends_its_wallets_chains_and_sections() {
+        let wallet = "0x1234567890abcdef1234567890abcdef12345678";
+        let empty = json!({ "valueUsd": "0", "balancesValueUsd": "0", "positionsValueUsd": "0", "chains": [] });
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/portfolio"))
+            .and(query_param("wallets", wallet))
+            .and(query_param("chains", "robinhood,bsc"))
+            .and(query_param("include", "stats"))
+            .and(query_param("hideLowLiquidity", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "totalValueUsd": "0",
+                "asOf": 1,
+                "wallets": [{ "addresses": { "evm": wallet }, "spot": empty }],
+                "spot": empty,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let query = PortfolioQuery {
+            wallets: vec![wallet.parse().expect("a wallet")],
+            chains: Some(vec![SpotChain::Robinhood, SpotChain::Bsc]),
+            include: Some(vec![PortfolioInclude::Stats]),
+            hide_low_liquidity: true,
+        };
+        let portfolio = provider(&server).wallet_portfolio(&query).await.expect("portfolio");
+
+        assert_eq!(portfolio.wallets.len(), 1);
+        assert!(portfolio.stats.is_none());
     }
 
     #[tokio::test]
@@ -473,20 +514,18 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/v1/native-prices"))
             .and(query_param("chains", every_chain.join(",")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "nativePrices": [{
-                    "chain": "solana",
-                    "asset": "SOL",
-                    "price": { "native": "1", "usd": "150.25" },
-                    "observedAt": 1_790_930_462_000_u64,
-                }],
-            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "chain": "solana",
+                "asset": "SOL",
+                "price": { "native": "1", "usd": "150.25" },
+                "observedAt": 1_790_930_462_000_u64,
+            }])))
             .expect(1)
             .mount(&server)
             .await;
 
         let prices = provider(&server).native_prices(&NativePricesQuery::default()).await;
-        let prices = prices.expect("prices").native_prices;
+        let prices = prices.expect("prices");
 
         assert_eq!(prices.len(), 1);
         assert_eq!(prices[0].chain, SpotChain::Solana);
@@ -523,23 +562,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_ohlcv_read_sends_the_timeframe_slug() {
+    async fn an_ohlcv_read_sends_its_tokens_and_the_timeframe_slug() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path(format!("/v1/tokens/solana/{MINT}/ohlcv")))
+            .and(path("/v1/ohlcv"))
+            .and(query_param("tokens", MINT))
             .and(query_param("timeframe", "5m"))
             .and(query_param("countBack", "100"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "candles": [] })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .expect(1)
             .mount(&server)
             .await;
 
-        let query = SpotCandlesQuery {
+        let query = CandleSeriesQuery {
+            tokens: vec![mint()],
+            chains: None,
             timeframe: Some(Timeframe::FiveMin),
+            metric: None,
+            denomination: None,
+            from: None,
+            to: None,
             count_back: Some(100),
-            ..SpotCandlesQuery::default()
         };
-        provider(&server).token_ohlcv(SpotChain::Solana, &mint(), &query).await.expect("candles");
+        let list = provider(&server).ohlcv(&query).await.expect("candles");
+
+        assert!(list.is_empty());
     }
 
     #[tokio::test]
@@ -548,7 +595,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/discovery"))
             .and(body_json(json!({ "chains": ["solana"], "graduating": { "limit": 5 } })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "columns": [] })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .expect(1)
             .mount(&server)
             .await;
@@ -560,7 +607,7 @@ mod tests {
         };
         let board = provider(&server).discovery_board(&request).await.expect("board");
 
-        assert!(board.columns.is_empty());
+        assert!(board.is_empty());
     }
 
     #[tokio::test]
@@ -569,7 +616,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/trending"))
             .and(body_json(json!({ "chains": ["solana"], "window": "1h", "limit": 5 })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "deltas": [] })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .expect(1)
             .mount(&server)
             .await;
@@ -582,7 +629,7 @@ mod tests {
         };
         let board = provider(&server).trending_board(&request).await.expect("board");
 
-        assert!(board.deltas.is_empty());
+        assert!(board.is_empty());
     }
 
     #[tokio::test]
@@ -623,34 +670,32 @@ mod tests {
         let provider =
             MetastreamsProvider::new_with_base_url(KEY, &format!("{}/gateway/", server.uri()))
                 .expect("provider");
-        provider.identity_trades(&kol()).await.expect("page");
+        provider.trades(&kol()).await.expect("page");
     }
 
     #[tokio::test]
     async fn an_error_envelope_reads_as_its_code() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path(format!("/v1/tokens/solana/{MINT}")))
+            .and(path("/v1/tokens"))
             .respond_with(
-                ResponseTemplate::new(404).insert_header("x-request-id", "req-1").set_body_json(
+                ResponseTemplate::new(400).insert_header("x-request-id", "req-1").set_body_json(
                     json!({
-                        "error": { "code": "NOT_FOUND", "message": "No such token." },
+                        "error": { "code": "VALIDATION_ERROR", "message": "Name at least one address." },
                     }),
                 ),
             )
             .mount(&server)
             .await;
 
-        let error = provider(&server)
-            .token_details(SpotChain::Solana, &mint())
-            .await
-            .expect_err("not found");
+        let query = TokensQuery { tokens: vec![mint()], chains: None };
+        let error = provider(&server).tokens(&query).await.expect_err("refused");
 
         let MetastreamsError::Api { status, error: detail, request_id } = &error else {
             panic!("expected an API error, got {error:?}");
         };
-        assert_eq!(*status, StatusCode::NOT_FOUND);
-        assert_eq!(detail.code, ErrorCode::NotFound);
+        assert_eq!(*status, StatusCode::BAD_REQUEST);
+        assert_eq!(detail.code, ErrorCode::ValidationError);
         assert_eq!(request_id.as_deref(), Some("req-1"));
         assert!(!error.is_transient());
     }
@@ -668,7 +713,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let error = provider(&server).identity_trades(&kol()).await.expect_err("limited");
+        let error = provider(&server).trades(&kol()).await.expect_err("limited");
 
         assert!(matches!(
             error,
@@ -697,7 +742,7 @@ mod tests {
         let provider = MetastreamsProvider::new_with_base_url(KEY, &format!("http://{address}"))
             .expect("provider");
 
-        let error = provider.identity_trades(&kol()).await.expect_err("limited");
+        let error = provider.trades(&kol()).await.expect_err("limited");
 
         assert!(
             matches!(
@@ -717,7 +762,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let error = provider(&server).identity_trades(&kol()).await.expect_err("bad gateway");
+        let error = provider(&server).trades(&kol()).await.expect_err("bad gateway");
 
         assert!(
             matches!(&error, MetastreamsError::Unexpected { body, .. } if body.contains("Bad Gateway"))

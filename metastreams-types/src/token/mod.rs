@@ -10,8 +10,9 @@ pub mod platform;
 pub mod pool;
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
+use crate::address::MultiChainAddress;
 use crate::chain::SpotChain;
 use crate::decimal::Decimal;
 use crate::money::UiMoney;
@@ -22,7 +23,22 @@ use crate::token::funding::{FundingSourceKind, FundingStatus};
 use crate::token::platform::UiPlatform;
 use crate::token::pool::UiTokenPool;
 
-/// `GET /v1/tokens/{chain}/{address}` response.
+/// Query for `GET /v1/tokens`.
+#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TokensQuery {
+    /// Token addresses, CSV; one to 100. Each reads on every chain in scope of its address family.
+    #[serde(with = "crate::csv::tokens")]
+    #[param(value_type = String, example = "So11111111111111111111111111111111111111112")]
+    pub tokens: Vec<MultiChainAddress>,
+    /// Chains to scope to, CSV of the chain slugs. Absent means every spot chain.
+    #[serde(default, with = "crate::csv::chains", skip_serializing_if = "Option::is_none")]
+    #[param(value_type = Option<String>, example = "solana,bsc")]
+    pub chains: Option<Vec<SpotChain>>,
+}
+
+/// One token: its market state, decimals and supply. `GET /v1/tokens` answers an array of them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UiSpotToken {
@@ -119,17 +135,17 @@ pub struct UiSpotPulseToken {
 pub struct UiTokenLogo {
     /// 16×16 pixels, for inline icons.
     #[schema(examples(
-        "https://cdn.click.trade/So11111111111111111111111111111111111111112_16x16.webp"
+        "https://cdn.example.com/So11111111111111111111111111111111111111112_16x16.webp"
     ))]
     pub small: String,
     /// 60×60 pixels, for list rows.
     #[schema(examples(
-        "https://cdn.click.trade/So11111111111111111111111111111111111111112_60x60.webp"
+        "https://cdn.example.com/So11111111111111111111111111111111111111112_60x60.webp"
     ))]
     pub medium: String,
     /// The artwork at full size.
     #[schema(examples(
-        "https://cdn.click.trade/So11111111111111111111111111111111111111112.webp"
+        "https://cdn.example.com/So11111111111111111111111111111111111111112.webp"
     ))]
     pub large: String,
 }

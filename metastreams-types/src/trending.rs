@@ -69,14 +69,6 @@ pub enum TrendingWindow {
     TwentyFourHours,
 }
 
-/// `POST /v1/trending` response: the ranked board, rank 1 first.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UiSpotTrendingUpdate {
-    /// The whole board, one entry per rank.
-    pub deltas: Vec<UiSpotTrendingDelta>,
-}
-
 /// One token's place on a trending board.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

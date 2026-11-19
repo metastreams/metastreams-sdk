@@ -20,7 +20,7 @@ pub const TRADES_LIMIT_DEFAULT: u32 = 20;
 /// Most trades one page may carry.
 pub const TRADES_LIMIT_MAX: u32 = 100;
 
-/// Query for `GET /v1/tokens/{chain}/{address}/trades`.
+/// The query of the deprecated single-token trades read.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -51,26 +51,53 @@ impl TokenTradesQuery {
 }
 
 /// Query for `GET /v1/trades`.
-#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+///
+/// A read names `identity`, or `tokens`, `wallets` or both. `flags` needs `tokens` and no
+/// `wallets`. `side` needs `wallets`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct IdentityTradesQuery {
-    /// Which identity feed to read.
-    pub identity: IdentityFeed,
+pub struct TradesQuery {
+    /// Identity feed to read. A read that names it names no `tokens` or `wallets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<IdentityFeed>,
+    /// Token addresses, CSV; one to 10. Each reads on every chain in scope of its address family.
+    #[serde(
+        default,
+        with = "crate::csv::optional::tokens",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[param(value_type = Option<String>, example = "So11111111111111111111111111111111111111112")]
+    pub tokens: Option<Vec<MultiChainAddress>>,
+    /// Wallet addresses, CSV; one to 100. Each reads on every chain in scope of its address family.
+    #[serde(
+        default,
+        with = "crate::csv::optional::wallets",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[param(value_type = Option<String>, example = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")]
+    pub wallets: Option<Vec<MultiChainAddress>>,
     /// Chains to scope to, CSV of the chain slugs. Absent means every spot chain.
     #[serde(default, with = "crate::csv::chains", skip_serializing_if = "Option::is_none")]
-    #[param(value_type = Option<String>, example = "solana,base")]
+    #[param(value_type = Option<String>, example = "solana,bsc")]
     pub chains: Option<Vec<SpotChain>>,
+    /// Wallet classifications to keep, comma-separated. Absent or empty keeps every trade.
+    #[serde(default, with = "crate::csv", skip_serializing_if = "Option::is_none")]
+    #[param(value_type = Option<String>, example = "bundler,insider")]
+    pub flags: Option<Vec<WalletFilter>>,
+    /// Keep only this side of the book.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<TradeDirection>,
     /// Rows per page, clamped to 1-100; 20 when absent.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[param(minimum = 1, maximum = 100)]
     pub limit: Option<u32>,
     /// Opaque cursor from the previous page.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
 
-impl IdentityTradesQuery {
+impl TradesQuery {
     /// Rows per page, clamped to `1..=`[`TRADES_LIMIT_MAX`].
     #[must_use]
     pub fn limit(&self) -> u32 {
@@ -123,8 +150,7 @@ pub struct UiSpotTrade {
     pub timestamp: UnixMilliseconds,
 }
 
-/// A page of trades, newest first: one token's (`GET /v1/tokens/{chain}/{address}/trades`)
-/// or one identity's across every token (`GET /v1/trades`).
+/// A page of trades, newest first.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UiSpotTrades {
@@ -156,7 +182,7 @@ pub struct UiWalletIdentity {
     pub farcaster: Option<String>,
 }
 
-/// A cross-token feed of trades by a notable identity: `GET /v1/trades?identity=`.
+/// A cross-token feed of trades by a notable identity.
 #[derive(
     Debug,
     Clone,
@@ -337,7 +363,7 @@ pub enum TraderSource {
 }
 
 /// `limit`, or the default when absent, clamped to `1..=`[`TRADES_LIMIT_MAX`].
-fn trades_limit(limit: Option<u32>) -> u32 {
+pub(crate) fn trades_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(TRADES_LIMIT_DEFAULT).clamp(1, TRADES_LIMIT_MAX)
 }
 
@@ -397,9 +423,9 @@ mod tests {
 
     #[test]
     fn the_identity_feed_parses_its_names() {
-        let query: IdentityTradesQuery =
+        let query: TradesQuery =
             serde_json::from_value(serde_json::json!({ "identity": "fomo" })).expect("parses");
-        assert_eq!(query.identity, IdentityFeed::Fomo);
+        assert_eq!(query.identity, Some(IdentityFeed::Fomo));
         assert_eq!(IdentityFeed::iter().count(), 2);
     }
 

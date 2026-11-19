@@ -86,28 +86,134 @@ pub mod chains {
 
 /// `#[serde(with)]` for a required `wallets` list: each address once, a malformed one refused.
 pub mod wallets {
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserializer, Serializer};
 
-    use super::parse_csv_deduped;
     use crate::address::MultiChainAddress;
-    use crate::error::{ErrorDetail, FieldError};
 
     /// Joins the wallets into the list [`deserialize`] reads.
     pub fn serialize<S: Serializer>(
         wallets: &[MultiChainAddress],
         s: S,
     ) -> Result<S::Ok, S::Error> {
-        let parts: Vec<String> = wallets.iter().map(ToString::to_string).collect();
-        s.serialize_str(&parts.join(","))
+        super::addresses::serialize(wallets, s)
     }
 
     /// Splits the list on commas and keeps each address once.
     pub fn deserialize<'de, D: Deserializer<'de>>(
         d: D,
     ) -> Result<Vec<MultiChainAddress>, D::Error> {
-        parse_csv_deduped(&String::deserialize(d)?).map_err(|_| {
-            let error = FieldError::new("wallets", "Each wallet must be a Solana or EVM address.");
-            ErrorDetail::validation(vec![error]).into_de_error()
+        super::addresses::deserialize(d, "wallets", "Each wallet must be a Solana or EVM address.")
+    }
+}
+
+/// `#[serde(with)]` for a required `tokens` list: each address once, a malformed one refused.
+pub mod tokens {
+    use serde::{Deserializer, Serializer};
+
+    use crate::address::MultiChainAddress;
+
+    /// Joins the tokens into the list [`deserialize`] reads.
+    pub fn serialize<S: Serializer>(tokens: &[MultiChainAddress], s: S) -> Result<S::Ok, S::Error> {
+        super::addresses::serialize(tokens, s)
+    }
+
+    /// Splits the list on commas and keeps each address once.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<MultiChainAddress>, D::Error> {
+        super::addresses::deserialize(d, "tokens", "Each token must be a Solana or EVM address.")
+    }
+}
+
+/// `#[serde(with)]` for the optional `tokens` and `wallets` lists. Pair it with `#[serde(default)]`.
+pub mod optional {
+    /// [`super::wallets`], for a list the read may omit.
+    pub mod wallets {
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        use crate::address::MultiChainAddress;
+
+        /// Joins the wallets into the list [`deserialize`] reads.
+        pub fn serialize<S: Serializer>(
+            wallets: &Option<Vec<MultiChainAddress>>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            crate::csv::serialize(wallets, s)
+        }
+
+        /// Reads the list as [`super::super::wallets`] does.
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<Vec<MultiChainAddress>>, D::Error> {
+            let Some(raw) = Option::<String>::deserialize(d)? else {
+                return Ok(None);
+            };
+            let message = "Each wallet must be a Solana or EVM address.";
+            crate::csv::addresses::parse(&raw, "wallets", message).map(Some)
+        }
+    }
+
+    /// [`super::tokens`], for a list the read may omit.
+    pub mod tokens {
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        use crate::address::MultiChainAddress;
+
+        /// Joins the tokens into the list [`deserialize`] reads.
+        pub fn serialize<S: Serializer>(
+            tokens: &Option<Vec<MultiChainAddress>>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            crate::csv::serialize(tokens, s)
+        }
+
+        /// Reads the list as [`super::super::tokens`] does.
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<Vec<MultiChainAddress>>, D::Error> {
+            let Some(raw) = Option::<String>::deserialize(d)? else {
+                return Ok(None);
+            };
+            let message = "Each token must be a Solana or EVM address.";
+            crate::csv::addresses::parse(&raw, "tokens", message).map(Some)
+        }
+    }
+}
+
+/// The address-list parse that [`wallets`], [`tokens`] and [`optional`] share.
+mod addresses {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::parse_csv_deduped;
+    use crate::address::MultiChainAddress;
+    use crate::error::{ErrorDetail, FieldError};
+
+    /// Joins the addresses with commas.
+    pub fn serialize<S: Serializer>(
+        addresses: &[MultiChainAddress],
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        let parts: Vec<String> = addresses.iter().map(ToString::to_string).collect();
+        s.serialize_str(&parts.join(","))
+    }
+
+    /// Reads a required list of `field`.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+        field: &str,
+        message: &str,
+    ) -> Result<Vec<MultiChainAddress>, D::Error> {
+        parse(&String::deserialize(d)?, field, message)
+    }
+
+    /// Each address of `raw` once, or a validation error on `field` that says `message`.
+    pub fn parse<E: serde::de::Error>(
+        raw: &str,
+        field: &str,
+        message: &str,
+    ) -> Result<Vec<MultiChainAddress>, E> {
+        parse_csv_deduped(raw).map_err(|_| {
+            ErrorDetail::validation(vec![FieldError::new(field, message)]).into_de_error()
         })
     }
 }

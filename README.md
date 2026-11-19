@@ -15,7 +15,7 @@ The crates are not on crates.io yet. Take them as a git dependency pinned to a t
 
 ```toml
 [dependencies]
-metastreams-sdk = { git = "https://github.com/metastreams/metastreams-sdk", tag = "v0.2.0" }
+metastreams-sdk = { git = "https://github.com/metastreams/metastreams-sdk", tag = "v0.3.0" }
 tokio           = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -26,15 +26,18 @@ Pin a `rev` instead of a `tag` to track a commit. The minimum supported Rust ver
 Every call sends the key as a bearer token and never retries. Get a key at <https://docs.metastreams.io/get-started/api-keys>.
 
 ```rust
+use metastreams_sdk::types::token::TokensQuery;
 use metastreams_sdk::{MetastreamsProvider, MultiChainAddress, SpotChain};
 
 #[tokio::main]
 async fn main() -> metastreams_sdk::Result<()> {
     let provider = MetastreamsProvider::new(std::env::var("METASTREAMS_API_KEY").unwrap())?;
     let usdc: MultiChainAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".parse().unwrap();
-    let token = provider.token_details(SpotChain::Solana, &usdc).await?;
-    let card = &token.card;
-    println!("{} ({}) has {} pools", card.name, card.symbol, card.pools.len());
+    let query = TokensQuery { tokens: vec![usdc], chains: Some(vec![SpotChain::Solana]) };
+    for token in provider.tokens(&query).await? {
+        let card = &token.card;
+        println!("{} ({}) has {} pools on {}", card.name, card.symbol, card.pools.len(), card.chain);
+    }
     Ok(())
 }
 ```

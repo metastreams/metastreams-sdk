@@ -34,7 +34,7 @@ pub struct PositionsQuery {
     pub wallets: Vec<MultiChainAddress>,
     /// Chains to scope to, CSV of the chain slugs. Absent means every spot chain.
     #[serde(default, with = "crate::csv::chains", skip_serializing_if = "Option::is_none")]
-    #[param(value_type = Option<String>, example = "solana,base")]
+    #[param(value_type = Option<String>, example = "solana,bsc")]
     pub chains: Option<Vec<SpotChain>>,
     /// Lifecycle to list; `open` when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]

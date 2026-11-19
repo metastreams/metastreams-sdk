@@ -10,6 +10,7 @@ use crate::decimal::Decimal;
 use crate::position::UiSpotPosition;
 use crate::schema::{enum_values, open_enumeration};
 use crate::sort::SortOrder;
+use crate::stream::SpotThesesFilter;
 use crate::time::UnixMilliseconds;
 
 /// Theses returned when a read names no `limit`.
@@ -95,6 +96,22 @@ impl TokenThesesQuery {
     #[must_use]
     pub fn order(&self) -> SortOrder {
         self.order.unwrap_or_default()
+    }
+}
+
+/// The theses read under the same filter, at its default sort and page size.
+impl From<&SpotThesesFilter> for TokenThesesQuery {
+    fn from(filter: &SpotThesesFilter) -> Self {
+        Self {
+            sources: filter.sources.clone(),
+            wallets: filter.wallets.clone(),
+            handles: filter.handles.clone(),
+            min_position_usd: filter.min_position_usd,
+            max_position_usd: filter.max_position_usd,
+            verified: filter.verified,
+            is_dev: filter.is_dev,
+            ..Self::default()
+        }
     }
 }
 

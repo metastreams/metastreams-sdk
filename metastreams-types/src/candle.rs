@@ -7,10 +7,69 @@ use strum::{Display, EnumIter, IntoStaticStr};
 use utoipa::openapi::schema::{Object, ObjectBuilder, SchemaType, Type};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::address::MultiChainAddress;
 use crate::chain::SpotChain;
 use crate::time::UnixMilliseconds;
 
-/// Query params for `GET /v1/tokens/{chain}/{address}/ohlcv`.
+/// Query for `GET /v1/ohlcv`.
+#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CandleSeriesQuery {
+    /// Token addresses, CSV; one to 10. Each reads on every chain in scope of its address family.
+    #[serde(with = "crate::csv::tokens")]
+    #[param(value_type = String, example = "So11111111111111111111111111111111111111112")]
+    pub tokens: Vec<MultiChainAddress>,
+    /// Chains to scope to, CSV of the chain slugs. Absent means every spot chain.
+    #[serde(default, with = "crate::csv::chains", skip_serializing_if = "Option::is_none")]
+    #[param(value_type = Option<String>, example = "solana,bsc")]
+    pub chains: Option<Vec<SpotChain>>,
+    /// Candle bucket size; defaults to `1m`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[param(schema_with = timeframe_schema)]
+    pub timeframe: Option<Timeframe>,
+    /// OHLC metric, `price` or `marketCap`; defaults to `marketCap`.
+    #[serde(
+        default,
+        deserialize_with = "optional_camel_case_metric",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[param(value_type = Option<String>, default = "marketCap")]
+    pub metric: Option<CandleMetric>,
+    /// OHLC denomination; defaults to `usd`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[param(value_type = Option<String>, default = "usd")]
+    pub denomination: Option<CandleDenomination>,
+    /// Window start, inclusive; ignored when `countBack` is set. A window holding
+    /// more candles than the cap keeps the newest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<UnixMilliseconds>,
+    /// Window end, exclusive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<UnixMilliseconds>,
+    /// `TradingView` bar count per series: the most recent N buckets at or before `to`.
+    /// Takes priority over `from`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[param(value_type = Option<u32>, minimum = 1, maximum = 5000)]
+    pub count_back: Option<u32>,
+}
+
+impl CandleSeriesQuery {
+    /// The series options, without the scope.
+    #[must_use]
+    pub fn window(&self) -> SpotCandlesQuery {
+        SpotCandlesQuery {
+            timeframe: self.timeframe,
+            metric: self.metric,
+            denomination: self.denomination,
+            from: self.from,
+            to: self.to,
+            count_back: self.count_back,
+        }
+    }
+}
+
+/// The options of one candle series, and the query of the deprecated single-token OHLCV read.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -75,10 +134,22 @@ pub struct UiCandle {
     pub volume: f64,
 }
 
-/// `GET /v1/tokens/{chain}/{address}/ohlcv` response.
+/// One token's candle buckets, as the deprecated single-token OHLCV read returns them.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UiCandlesResponse {
+    /// Buckets, oldest first.
+    pub candles: Vec<UiCandle>,
+}
+
+/// One token's candle buckets on one chain, an element of the `GET /v1/ohlcv` response.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UiCandleSeries {
+    /// Chain the token trades on.
+    pub chain: SpotChain,
+    /// Token address.
+    pub address: String,
     /// Buckets, oldest first.
     pub candles: Vec<UiCandle>,
 }

@@ -23,7 +23,7 @@ use tokio_tungstenite::tungstenite::{self, Message};
 use tracing::{debug, warn};
 
 use metastreams_types::candle::{CandleDenomination, CandleMetric};
-use metastreams_types::error::ErrorDetail;
+use metastreams_types::error::{ErrorCode, ErrorDetail};
 use metastreams_types::filter::CandleFilter;
 use metastreams_types::stream::{
     ClientMessage, ServerMessage, SubscribeOptions, Subscription, SubscriptionId, Throttled,
@@ -34,8 +34,9 @@ use crate::constants::{
 };
 use crate::error::{MetastreamsError, Result};
 
-/// Why a subscription ends. Each one is transient except [`KeyRevoked`](Self::KeyRevoked) and
-/// [`CreditsExhausted`](Self::CreditsExhausted).
+/// Why a subscription ends. Each one is transient except [`KeyRevoked`](Self::KeyRevoked),
+/// [`CreditsExhausted`](Self::CreditsExhausted), and [`Failed`](Self::Failed) for a fault not the
+/// server's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseReason {
     /// The server closes the socket with `4008` because the socket reads too slowly.
@@ -58,6 +59,8 @@ pub enum CloseReason {
     },
     /// The socket ends without a close the server names.
     Lost(LostCause),
+    /// The server ends this subscription only, with an `error` frame that names it.
+    Failed(Box<ErrorDetail>),
     /// This side closes the socket with [`StreamConnection::close`] or by dropping the connection.
     Client,
 }
@@ -66,7 +69,19 @@ impl CloseReason {
     /// Whether a new socket can carry the subscription again.
     #[must_use]
     pub fn is_transient(&self) -> bool {
-        !matches!(self, Self::KeyRevoked | Self::CreditsExhausted)
+        match self {
+            Self::KeyRevoked | Self::CreditsExhausted => false,
+            // A channel the organization lost does not come back on a new socket.
+            Self::Failed(error) => {
+                matches!(error.code, ErrorCode::InternalError | ErrorCode::ServiceUnavailable)
+            }
+            Self::SlowConsumer
+            | Self::Lagged
+            | Self::ServerRestarting
+            | Self::Other { .. }
+            | Self::Lost(_)
+            | Self::Client => true,
+        }
     }
 
     /// The reason for a task that ends without publishing one, such as by a panic.
@@ -98,6 +113,9 @@ impl fmt::Display for CloseReason {
             Self::CreditsExhausted => f.write_str("credits exhausted (4402)"),
             Self::Other { code, reason } => write!(f, "{reason} ({code})"),
             Self::Lost(cause) => write!(f, "connection lost: {cause}"),
+            Self::Failed(error) => {
+                write!(f, "the server ended it with {:?}: {}", error.code, error.message)
+            }
             Self::Client => f.write_str("closed by the client"),
         }
     }
@@ -481,11 +499,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Driver<T> {
                 self.open(&request, id);
                 Ok(())
             }
-            ServerMessage::Error { id: Some(request), error } => {
+            ServerMessage::Error { subscription_id: Some(id), error, .. } => {
+                self.end(id, error);
+                Ok(())
+            }
+            ServerMessage::Error { id: Some(request), error, .. } => {
                 self.reject(&request, error);
                 Ok(())
             }
-            ServerMessage::Error { id: None, error } => {
+            ServerMessage::Error { id: None, error, .. } => {
                 warn!(code = ?error.code, message = %error.message, "metastreams refused a frame");
                 Ok(())
             }
@@ -512,6 +534,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Driver<T> {
             return;
         };
         let _ = reply.send(Err(MetastreamsError::Rejected { channel, error: Box::new(error) }));
+    }
+
+    /// Ends subscription `id`, which the server closed with `error`. Its stream yields the frames
+    /// it holds, then the close.
+    fn end(&mut self, id: SubscriptionId, error: ErrorDetail) {
+        // The server's close can race this side's unsubscribe.
+        let Some(route) = self.routes.remove(&id) else {
+            return;
+        };
+        let (code, message) = (error.code, error.message.as_str());
+        warn!(channel = route.channel, ?id, ?code, message, "metastreams ended a subscription");
+        let _ = route.ended.set(CloseReason::Failed(Box::new(error)));
     }
 
     /// Hands `frame` to subscription `id` without waiting, so one unread subscription
@@ -592,7 +626,6 @@ mod tests {
     use metastreams_types::address::MultiChainAddress;
     use metastreams_types::candle::Timeframe;
     use metastreams_types::chain::SpotChain;
-    use metastreams_types::error::ErrorCode;
     use metastreams_types::filter::{Range, TokenFilter, TradeFilter};
     use metastreams_types::stream::{AckStatus, UiTokenExit};
     use metastreams_types::trade::{TradeDirection, WalletFilter};
@@ -1044,6 +1077,7 @@ mod tests {
             };
             let error = ServerMessage::Error {
                 id,
+                subscription_id: None,
                 error: ErrorDetail {
                     code: ErrorCode::ValidationError,
                     message: "This key holds the most subscriptions it may.".to_owned(),
@@ -1064,6 +1098,55 @@ mod tests {
         assert_eq!(*channel, "spot.candles");
         assert_eq!(detail.code, ErrorCode::ValidationError);
         assert!(!error.is_transient());
+    }
+
+    #[tokio::test]
+    async fn an_error_that_names_a_subscription_ends_only_that_one_with_its_detail() {
+        let (provider, _server) = serve(|mut socket| async move {
+            let failed = ack(&mut socket).await;
+            let live = ack(&mut socket).await;
+            update::<CandleFilter>(&mut socket, failed, candle(1.5)).await;
+            let error = ServerMessage::Error {
+                id: Some("1".to_owned()),
+                subscription_id: Some(failed),
+                error: ErrorDetail {
+                    code: ErrorCode::InternalError,
+                    message: "Something went wrong.".to_owned(),
+                    details: None,
+                },
+            };
+            write(&mut socket, &error).await;
+            update::<CandleFilter>(&mut socket, live, candle(2.5)).await;
+            drain(socket).await;
+        })
+        .await;
+
+        let connection = provider.connect().await.expect("a socket");
+        let mut failed = connection.subscribe(&candles()).await.expect("an ack");
+        let mut live = connection.subscribe(&candles()).await.expect("an ack");
+
+        let Event::Update(held) = failed.next().await.expect("an item").expect("a candle");
+        assert!((held.candle.open - 1.5).abs() < f64::EPSILON);
+        let end = failed.next().await.expect("an item").expect_err("a close");
+        let MetastreamsError::Closed(CloseReason::Failed(error)) = &end else {
+            panic!("expected the server's close, got {end:?}");
+        };
+        assert_eq!(error.code, ErrorCode::InternalError);
+        assert!(end.is_transient());
+        assert!(failed.next().await.is_none());
+        let Event::Update(next) = live.next().await.expect("an item").expect("a candle");
+        assert!((next.candle.open - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_failed_close_is_transient_only_for_a_server_fault() {
+        let failed = |code| {
+            let message = "Gone.".to_owned();
+            CloseReason::Failed(Box::new(ErrorDetail { code, message, details: None }))
+        };
+
+        assert!(failed(ErrorCode::ServiceUnavailable).is_transient());
+        assert!(!failed(ErrorCode::NotFound).is_transient());
     }
 
     #[tokio::test]

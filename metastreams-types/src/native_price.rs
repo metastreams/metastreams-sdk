@@ -20,7 +20,7 @@ const KNOWN_ASSETS: [DepositAsset; 3] = [DepositAsset::Sol, DepositAsset::Eth, D
 pub struct NativePricesQuery {
     /// Chains to scope to, CSV of the chain slugs. Absent means every spot chain.
     #[serde(default, with = "crate::csv::chains", skip_serializing_if = "Option::is_none")]
-    #[param(value_type = Option<String>, example = "solana,base")]
+    #[param(value_type = Option<String>, example = "solana,bsc")]
     pub chains: Option<Vec<SpotChain>>,
 }
 
@@ -37,14 +37,6 @@ pub struct UiNativePrice {
     pub price: UiMoney,
     /// The instant the price source reports the rate was true.
     pub observed_at: UnixMilliseconds,
-}
-
-/// The latest price of each chain's gas asset.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UiNativePrices {
-    /// One row per chain with a known price, in `SpotChain` order.
-    pub native_prices: Vec<UiNativePrice>,
 }
 
 /// The published `asset` schema: an open string, since a new chain can bring a new gas asset.

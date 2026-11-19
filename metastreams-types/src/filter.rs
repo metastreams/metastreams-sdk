@@ -1087,7 +1087,7 @@ mod tests {
     #[test]
     fn the_spec_example_parses() {
         let parsed = filter(serde_json::json!({
-            "chains": ["solana", "base"],
+            "chains": ["solana", "robinhood"],
             "protocols": ["pumpfun", "clanker"],
             "marketCapUsd": { "min": "100000", "max": "5000000" },
             "stats": { "1h": { "priceChangePct": { "min": "20" } } },
@@ -1098,7 +1098,7 @@ mod tests {
         }))
         .expect("parses");
 
-        assert_eq!(parsed.chains, [SpotChain::Solana, SpotChain::Base]);
+        assert_eq!(parsed.chains, [SpotChain::Solana, SpotChain::Robinhood]);
         assert!(parsed.top10_holders_pct.is_some());
         let one_hour = parsed.stats.and_then(|stats| stats.one_hour).expect("1h");
         assert_eq!(

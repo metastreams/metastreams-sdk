@@ -185,11 +185,3 @@ impl UiSpotPulseDelta {
         Self { chain: token.chain, address: token.address.clone(), rank: None, data: None }
     }
 }
-
-/// `POST /v1/discovery` response: one snapshot per requested column, in page order.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UiSpotPulseResponse {
-    /// The requested columns' snapshots.
-    pub columns: Vec<UiSpotPulseUpdate>,
-}
