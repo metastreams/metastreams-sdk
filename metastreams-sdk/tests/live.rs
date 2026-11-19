@@ -11,7 +11,7 @@ use tokio::time::timeout;
 
 use metastreams_sdk::types::address::MultiChainAddress;
 use metastreams_sdk::types::balance::WalletBalancesQuery;
-use metastreams_sdk::types::candle::{SpotCandlesQuery, Timeframe};
+use metastreams_sdk::types::candle::{CandleSeriesQuery, Timeframe};
 use metastreams_sdk::types::chain::SpotChain;
 use metastreams_sdk::types::discovery::{SpotPulseColumnConfig, SpotPulseSubscriptionConfig};
 use metastreams_sdk::types::error::ErrorCode;
@@ -23,8 +23,9 @@ use metastreams_sdk::types::stream::{
     NativePricesFilter, SpotHoldersFilter, SpotPositionsFilter, Subscription, WalletBalancesFilter,
 };
 use metastreams_sdk::types::thesis::TokenThesesQuery;
-use metastreams_sdk::types::token::holders::TokenHoldersQuery;
-use metastreams_sdk::types::trade::{IdentityFeed, IdentityTradesQuery, TokenTradesQuery};
+use metastreams_sdk::types::token::TokensQuery;
+use metastreams_sdk::types::token::holders::HolderSeriesQuery;
+use metastreams_sdk::types::trade::{IdentityFeed, TradesQuery};
 use metastreams_sdk::types::trending::SpotTrendingFilter;
 use metastreams_sdk::{
     CandleOptions, Event, MetastreamsError, MetastreamsProvider, StreamConnection,
@@ -57,11 +58,15 @@ async fn sample(provider: &MetastreamsProvider) -> Sample {
         filters: None,
     };
     let board = provider.trending_board(&request).await.expect("trending board");
-    let top = board.deltas.first().expect("a trending token");
+    let top = board.first().expect("a trending token");
     let token: MultiChainAddress = top.address.to_string().parse().expect("a token address");
-    let query = TokenTradesQuery { limit: Some(1), ..TokenTradesQuery::default() };
-    let trades =
-        provider.token_trades(SpotChain::Solana, &token, &query).await.expect("token trades");
+    let query = TradesQuery {
+        tokens: Some(vec![token.clone()]),
+        chains: Some(vec![SpotChain::Solana]),
+        limit: Some(1),
+        ..TradesQuery::default()
+    };
+    let trades = provider.trades(&query).await.expect("token trades");
     let trade = trades.trades.first().expect("a trade on the top trending token");
     let wallet = trade.trader.parse().expect("a trader address");
     Sample { token, wallet }
@@ -108,20 +113,44 @@ async fn every_token_read_answers() {
     let Sample { token, .. } = sample(&provider).await;
     let chain = SpotChain::Solana;
 
-    let details = provider.token_details(chain, &token).await.expect("token details");
-    assert_eq!(details.card.address.to_string(), token.to_string());
+    let solana = Some(vec![chain]);
 
-    let query = SpotCandlesQuery { timeframe: Some(Timeframe::OneMin), ..Default::default() };
-    let candles = provider.token_ohlcv(chain, &token, &query).await.expect("ohlcv");
-    assert!(!candles.candles.is_empty(), "no candles");
+    let query = TokensQuery { tokens: vec![token.clone()], chains: solana.clone() };
+    let tokens = provider.tokens(&query).await.expect("tokens");
+    assert_eq!(tokens.len(), 1, "one token per chain in scope");
+    assert_eq!(tokens[0].card.address.to_string(), token.to_string());
 
-    let query = TokenTradesQuery { limit: Some(5), ..TokenTradesQuery::default() };
-    let trades = provider.token_trades(chain, &token, &query).await.expect("trades");
+    let query = CandleSeriesQuery {
+        tokens: vec![token.clone()],
+        chains: solana.clone(),
+        timeframe: Some(Timeframe::OneMin),
+        metric: None,
+        denomination: None,
+        from: None,
+        to: None,
+        count_back: None,
+    };
+    let series = provider.ohlcv(&query).await.expect("ohlcv");
+    assert!(series.iter().any(|series| !series.candles.is_empty()), "no candles");
+
+    let query = TradesQuery {
+        tokens: Some(vec![token.clone()]),
+        chains: solana.clone(),
+        limit: Some(5),
+        ..TradesQuery::default()
+    };
+    let trades = provider.trades(&query).await.expect("trades");
     assert!(!trades.trades.is_empty(), "no trades");
 
-    let query = TokenHoldersQuery { limit: Some(5), ..TokenHoldersQuery::default() };
-    let holders = provider.token_holders(chain, &token, &query).await.expect("holders");
-    assert!(!holders.holders.is_empty(), "no holders");
+    let query = HolderSeriesQuery {
+        tokens: vec![token.clone()],
+        chains: solana,
+        limit: Some(5),
+        flags: None,
+        period: None,
+    };
+    let holders = provider.holders(&query).await.expect("holders");
+    assert!(holders.iter().any(|series| !series.holders.is_empty()), "no holders");
 
     // Theses are enabled per organization; for a key without the feature, the route is not found.
     let query = TokenThesesQuery { limit: Some(5), ..TokenThesesQuery::default() };
@@ -141,8 +170,9 @@ async fn every_wallet_and_board_read_answers() {
     let Sample { wallet, .. } = sample(&provider).await;
 
     for identity in [IdentityFeed::Kol, IdentityFeed::Fomo] {
-        let query = IdentityTradesQuery { identity, chains: None, limit: Some(5), cursor: None };
-        provider.identity_trades(&query).await.expect("identity trades");
+        let query =
+            TradesQuery { identity: Some(identity), limit: Some(5), ..TradesQuery::default() };
+        provider.trades(&query).await.expect("identity trades");
     }
 
     let query = WalletBalancesQuery { wallets: vec![wallet.clone()], chains: None };
@@ -152,7 +182,7 @@ async fn every_wallet_and_board_read_answers() {
     provider.positions(&query).await.expect("positions");
 
     let prices = provider.native_prices(&NativePricesQuery::default()).await.expect("prices");
-    assert!(!prices.native_prices.is_empty(), "no native prices");
+    assert!(!prices.is_empty(), "no native prices");
 
     let column = Some(SpotPulseColumnConfig { limit: Some(5), ..Default::default() });
     let request = SpotPulseSubscriptionConfig {
@@ -162,7 +192,7 @@ async fn every_wallet_and_board_read_answers() {
         graduated: column,
     };
     let board = provider.discovery_board(&request).await.expect("discovery");
-    assert_eq!(board.columns.len(), 3, "one entry per column");
+    assert!(!board.is_empty(), "no discovery columns");
 
     for window in [TrendingWindow::OneMinute, TrendingWindow::OneHour] {
         let request = SpotTrendingFilter {
@@ -172,7 +202,7 @@ async fn every_wallet_and_board_read_answers() {
             filters: None,
         };
         let board = provider.trending_board(&request).await.expect("trending");
-        assert!(!board.deltas.is_empty(), "an empty {window:?} board");
+        assert!(!board.is_empty(), "an empty {window:?} board");
     }
 
     let request = CreateSessionTokenRequest {

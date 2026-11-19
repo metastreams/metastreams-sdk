@@ -12,16 +12,18 @@ use crate::address::MultiChainAddress;
 use crate::balance::UiWalletBalance;
 use crate::candle::{CandleDenomination, CandleMetric, UiCandleUpdate, optional_camel_case_metric};
 use crate::chain::{SpotChain, de};
+use crate::decimal::Decimal;
 use crate::discovery::{SpotPulseSubscriptionConfig, UiSpotPulseUpdate};
 use crate::error::{ErrorDetail, FieldError};
 use crate::filter::{CandleFilter, TokenFilter, TradeFilter, TransferFilter};
 use crate::native_price::UiNativePrice;
 use crate::position::UiSpotPosition;
+use crate::thesis::{ThesisSourceFilter, UiTokenThesis};
 use crate::token::UiSpotToken;
 use crate::token::holders::UiSpotHolder;
 use crate::trade::{UiSpotTrade, WalletFilter};
 use crate::transfer::UiSpotTransfer;
-use crate::trending::{SpotTrendingFilter, UiSpotTrendingUpdate};
+use crate::trending::{SpotTrendingFilter, UiSpotTrendingDelta};
 
 /// The subprotocol a browser offers beside its session token on the handshake, and the one the
 /// server selects.
@@ -139,6 +141,46 @@ impl Subscription for SpotHoldersFilter {
     type Exit = NoExit;
 }
 
+/// `spot.theses` filter: one token on one chain, optionally narrowed as the theses read narrows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpotThesesFilter {
+    /// Chain the token trades on.
+    #[serde(deserialize_with = "de::required")]
+    pub chain: SpotChain,
+    /// Token address on `chain`.
+    #[serde(deserialize_with = "token")]
+    pub token: MultiChainAddress,
+    /// Apps to keep, as the theses read's `sources`; absent keeps every app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<ThesisSourceFilter>>,
+    /// Author wallets to keep, as the theses read's `wallets`; absent keeps every author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallets: Option<Vec<MultiChainAddress>>,
+    /// Author handles to keep, as the theses read's `handles`; absent keeps every author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handles: Option<Vec<String>>,
+    /// Smallest `positionUsd` kept, inclusive, as the theses read's `minPositionUsd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_position_usd: Option<Decimal>,
+    /// Largest `positionUsd` kept, inclusive, as the theses read's `maxPositionUsd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_position_usd: Option<Decimal>,
+    /// Verified or unverified authors only, as the theses read's `verified`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified: Option<bool>,
+    /// The token's deployer only, or every other author, as the theses read's `isDev`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_dev: Option<bool>,
+}
+
+/// The seed is the newest page as one update. Each later update is one new thesis.
+impl Subscription for SpotThesesFilter {
+    const CHANNEL: &'static str = "spot.theses";
+    type Update = Vec<UiTokenThesis>;
+    type Exit = NoExit;
+}
+
 /// `chain.nativePrices` filter: the chains whose gas asset prices to send.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -156,7 +198,7 @@ impl Subscription for NativePricesFilter {
 
 impl Subscription for SpotTrendingFilter {
     const CHANNEL: &'static str = "spot.trending";
-    type Update = UiSpotTrendingUpdate;
+    type Update = Vec<UiSpotTrendingDelta>;
     type Exit = NoExit;
 }
 
@@ -280,6 +322,9 @@ pub enum ServerMessage {
         /// The subscribe request's `id`, when it carried one.
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        /// The subscription this error ends; absent when it ends none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subscription_id: Option<SubscriptionId>,
         /// The error, as the REST envelope carries it.
         #[serde(flatten)]
         error: ErrorDetail,
@@ -380,13 +425,46 @@ mod tests {
         });
         round_trip(ServerMessage::Error {
             id: None,
+            subscription_id: None,
             error: ErrorDetail {
                 code: ErrorCode::NotFound,
                 message: "No such subscription.".to_owned(),
                 details: None,
             },
         });
+        round_trip(ServerMessage::Error {
+            id: Some("1".to_owned()),
+            subscription_id: Some(subscription_id),
+            error: ErrorDetail {
+                code: ErrorCode::InternalError,
+                message: "Something went wrong.".to_owned(),
+                details: None,
+            },
+        });
         round_trip(ServerMessage::Pong);
+    }
+
+    /// An error that ends no subscription writes no `subscriptionId`; one that ends a
+    /// subscription names it.
+    #[test]
+    fn an_error_frame_names_only_the_subscription_it_ends() {
+        let error = ErrorDetail {
+            code: ErrorCode::NotFound,
+            message: "No such subscription.".to_owned(),
+            details: None,
+        };
+        let refused =
+            ServerMessage::Error { id: None, subscription_id: None, error: error.clone() };
+        let subscription_id = SubscriptionId::new();
+        let ended =
+            ServerMessage::Error { id: None, subscription_id: Some(subscription_id), error };
+
+        assert_eq!(
+            serde_json::to_string(&refused).expect("serializes"),
+            r#"{"type":"error","code":"NOT_FOUND","message":"No such subscription."}"#
+        );
+        let ended = serde_json::to_value(&ended).expect("serializes");
+        assert_eq!(ended["subscriptionId"], serde_json::json!(subscription_id));
     }
 
     #[test]
@@ -560,6 +638,36 @@ mod tests {
             serde_json::json!({ "chain": "solana" }),
         ] {
             let read = serde_json::from_value::<SpotHoldersFilter>(json.clone());
+            assert!(read.is_err(), "{json} parses");
+        }
+    }
+
+    #[test]
+    fn a_theses_filter_round_trips_and_refuses_an_unknown_key_or_source() {
+        let token = "So11111111111111111111111111111111111111112";
+        let json = serde_json::json!({
+            "chain": "solana",
+            "token": token,
+            "sources": ["fomo", "gmgn"],
+            "wallets": [token],
+            "handles": ["cooker"],
+            "minPositionUsd": "1000",
+            "maxPositionUsd": "5000",
+            "verified": true,
+            "isDev": false,
+        });
+        let filter: SpotThesesFilter = serde_json::from_value(json.clone()).expect("parses");
+
+        assert_eq!(filter.sources, Some(vec![ThesisSourceFilter::Fomo, ThesisSourceFilter::Gmgn]));
+        assert_eq!((filter.verified, filter.is_dev), (Some(true), Some(false)));
+        assert_eq!(serde_json::to_value(&filter).expect("serializes"), json);
+        for json in [
+            serde_json::json!({ "chain": "solana", "token": token, "minLikes": 1 }),
+            serde_json::json!({ "chain": "solana", "token": token, "wallets": "a,b" }),
+            serde_json::json!({ "chain": "solana", "token": token, "sources": ["x"] }),
+            serde_json::json!({ "chain": "solana" }),
+        ] {
+            let read = serde_json::from_value::<SpotThesesFilter>(json.clone());
             assert!(read.is_err(), "{json} parses");
         }
     }

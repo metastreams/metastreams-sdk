@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::address::MultiChainAddress;
+use crate::chain::SpotChain;
 use crate::decimal::Decimal;
 use crate::money::UiMoney;
 use crate::position::UiWalletFunding;
@@ -17,7 +18,46 @@ pub const HOLDERS_LIMIT_DEFAULT: u32 = 30;
 /// Most holders one read may return.
 pub const HOLDERS_LIMIT_MAX: u32 = 150;
 
-/// Query for `GET /v1/tokens/{chain}/{address}/holders`.
+/// Query for `GET /v1/holders`.
+#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HolderSeriesQuery {
+    /// Token addresses, CSV; one to 10. Each reads on every chain in scope of its address family.
+    #[serde(with = "crate::csv::tokens")]
+    #[param(value_type = String, example = "So11111111111111111111111111111111111111112")]
+    pub tokens: Vec<MultiChainAddress>,
+    /// Chains to scope to, CSV of the chain slugs. Absent means every spot chain.
+    #[serde(default, with = "crate::csv::chains", skip_serializing_if = "Option::is_none")]
+    #[param(value_type = Option<String>, example = "solana,bsc")]
+    pub chains: Option<Vec<SpotChain>>,
+    /// Holders per token, clamped to 1-150; 30 when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[param(minimum = 1, maximum = 150)]
+    pub limit: Option<u32>,
+    /// Wallet classifications to keep, comma-separated. Absent or empty keeps every holder.
+    #[serde(default, with = "crate::csv", skip_serializing_if = "Option::is_none")]
+    #[param(value_type = Option<String>, example = "bundler,insider")]
+    pub flags: Option<Vec<WalletFilter>>,
+    /// Span the trading figures cover; `lifetime` when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub period: Option<HolderPeriod>,
+}
+
+impl HolderSeriesQuery {
+    /// The per-token options, without the scope.
+    #[must_use]
+    pub fn per_token(&self) -> TokenHoldersQuery {
+        TokenHoldersQuery {
+            limit: self.limit,
+            trader: None,
+            flags: self.flags.clone(),
+            period: self.period,
+        }
+    }
+}
+
+/// The options of one token's holder read, and the query of the deprecated single-token read.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -146,7 +186,7 @@ pub struct UiHolderCohortStats {
     pub avg_exit_price: Option<UiMoney>,
 }
 
-/// `GET /v1/tokens/{chain}/{address}/holders` response: current holders, largest balance first.
+/// One token's current holders, largest balance first, as the deprecated single-token read returns them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UiTokenHolderList {
@@ -158,6 +198,38 @@ pub struct UiTokenHolderList {
     /// Balance-weighted entry and exit prices across the first 10 holders; the filtered cohort
     /// under `flags`.
     pub top10: UiHolderCohortStats,
+}
+
+/// One token's current holders on one chain, an element of the `GET /v1/holders` response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UiHolderSeries {
+    /// Chain the token trades on.
+    pub chain: SpotChain,
+    /// Token address.
+    pub address: String,
+    /// Holders the read returned, largest balance first.
+    pub holders: Vec<UiSpotHolder>,
+    /// The token's own holder total, whatever the `limit` and any `flags` filter. It counts
+    /// trading wallets only, so it can run below a full listing that includes pool vaults.
+    pub holder_count: u64,
+    /// Balance-weighted entry and exit prices across the first 10 holders; the filtered cohort
+    /// under `flags`.
+    pub top10: UiHolderCohortStats,
+}
+
+impl UiHolderSeries {
+    /// `list`, as the series of `address` on `chain`.
+    #[must_use]
+    pub fn of(chain: SpotChain, address: String, list: UiTokenHolderList) -> Self {
+        Self {
+            chain,
+            address,
+            holders: list.holders,
+            holder_count: list.holder_count,
+            top10: list.top10,
+        }
+    }
 }
 
 #[cfg(test)]

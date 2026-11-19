@@ -15,6 +15,7 @@ pub mod error;
 pub mod filter;
 pub mod money;
 pub mod native_price;
+pub mod portfolio;
 pub mod position;
 pub mod schema;
 pub mod search;

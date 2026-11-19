@@ -35,7 +35,7 @@ pub enum UiPlatform {
     BtcTurk,
     /// BullX.
     BullX,
-    /// Click's own router.
+    /// "click".
     // Identified by its fee vault.
     Click,
     /// "GMGN".

@@ -2,6 +2,25 @@
 
 All notable changes to the two crates in this repository. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and both crates share one version.
 
+## 0.3.0 - 2026-11-19
+
+The API moved to one collection endpoint per resource. Each takes a list of addresses and reads every chain in scope of each address.
+
+### Breaking
+
+- `token_details` is `tokens` (`GET /v1/tokens`), and answers one `UiSpotToken` per token and chain.
+- `token_ohlcv` is `ohlcv` (`GET /v1/ohlcv`), and answers one `UiCandleSeries` per token and chain.
+- `token_holders` is `holders` (`GET /v1/holders`), and answers one `UiHolderSeries` per token and chain.
+- `token_trades` and `identity_trades` are `trades` (`GET /v1/trades`). `TradesQuery` takes `tokens`, `wallets` or `identity`.
+- `native_prices`, `discovery_board` and `trending_board` answer a bare list, and `UiWalletBalances` wraps one. `UiNativePrices` and `UiSpotPulseResponse` are gone.
+- A `spot.trending` update is a bare list of deltas.
+- `SpotChain::Base` and `SpotChain::Arc` are gone. The API no longer serves them.
+
+### Added
+
+- `wallet_portfolio` (`GET /v1/portfolio`): the summed spot holdings of up to 100 wallets, with optional stats, and the `portfolio` module.
+- `CloseReason::Failed`: the server ended one subscription with an `error` frame that names it. It is transient only for an internal or unavailable error.
+
 ## 0.2.0 - 2026-11-10
 
 ### Breaking

@@ -20,7 +20,7 @@ const KNOWN_TRIGGERS: [BalanceTrigger; 4] = [
     BalanceTrigger::FailedTx,
 ];
 
-/// Query for `GET /v1/wallets/balances`.
+/// Query for `GET /v1/balances`.
 #[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -31,7 +31,7 @@ pub struct WalletBalancesQuery {
     pub wallets: Vec<MultiChainAddress>,
     /// Chains to scope to, CSV of the chain slugs. Absent means every spot chain.
     #[serde(default, with = "crate::csv::chains", skip_serializing_if = "Option::is_none")]
-    #[param(value_type = Option<String>, example = "solana,base")]
+    #[param(value_type = Option<String>, example = "solana,bsc")]
     pub chains: Option<Vec<SpotChain>>,
 }
 
@@ -62,14 +62,15 @@ pub struct UiWalletBalance {
     pub updated_at: UnixMilliseconds,
 }
 
-/// The latest balance of each wallet and asset a read named.
+/// The latest balance of each wallet and asset a read named, ordered by chain, wallet, then
+/// asset. The wire form is a bare array.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UiWalletBalances {
-    /// One row per observed wallet and asset, ordered by chain, wallet, then asset.
+#[serde(transparent)]
+pub struct UiWalletBalances(
+    /// One row per observed wallet and asset. A reader drops a row it cannot name.
     #[serde(deserialize_with = "known_balances")]
-    pub balances: Vec<UiWalletBalance>,
-}
+    pub Vec<UiWalletBalance>,
+);
 
 /// A deposit or settlement asset symbol: the gas tokens and per-chain stables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, ToSchema)]
@@ -255,8 +256,7 @@ mod tests {
         newer["asset"] = "PYUSD".into();
 
         let read: UiWalletBalances =
-            serde_json::from_value(serde_json::json!({ "balances": [known, newer] }))
-                .expect("reads the known row");
-        assert_eq!(read.balances.len(), 1);
+            serde_json::from_value(serde_json::json!([known, newer])).expect("reads the known row");
+        assert_eq!(read.0.len(), 1);
     }
 }

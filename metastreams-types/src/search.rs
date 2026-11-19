@@ -27,7 +27,7 @@ pub struct AssetSearchQuery {
     pub kind: Option<SearchKind>,
     /// Scope hits to one chain. Omit to search every indexed chain.
     #[serde(default, deserialize_with = "de::optional", skip_serializing_if = "Option::is_none")]
-    #[param(example = "base")]
+    #[param(example = "bsc")]
     pub chain: Option<SpotChain>,
     /// Scope hits to these chains, CSV of the chain slugs. Omit to search every indexed
     /// chain. Combined with `chain` when both are set.
@@ -234,10 +234,11 @@ mod tests {
 
     #[test]
     fn chain_and_chains_combine_without_repeats() {
-        let query =
-            query(serde_json::json!({ "q": "bonk", "chain": "base", "chains": "robinhood, base" }));
+        let query = query(
+            serde_json::json!({ "q": "bonk", "chain": "elysium", "chains": "robinhood, elysium" }),
+        );
 
-        assert_eq!(query.chains(), [SpotChain::Base, SpotChain::Robinhood]);
+        assert_eq!(query.chains(), [SpotChain::Elysium, SpotChain::Robinhood]);
     }
 
     #[test]
@@ -270,12 +271,12 @@ mod tests {
     #[test]
     fn a_query_reads_back_what_it_writes() {
         let mut written = AssetSearchQuery::new("bonk");
-        written.chains = Some(vec![SpotChain::Base, SpotChain::Solana]);
+        written.chains = Some(vec![SpotChain::Elysium, SpotChain::Solana]);
         written.sort_by = Some(SearchSortField::MarketCap);
 
         let read = query(serde_json::to_value(&written).expect("serializes"));
 
-        assert_eq!(read.chains(), [SpotChain::Base, SpotChain::Solana]);
+        assert_eq!(read.chains(), [SpotChain::Elysium, SpotChain::Solana]);
         assert_eq!(read.sort_by, Some(SearchSortField::MarketCap));
         assert_eq!(read.limit(), SEARCH_LIMIT_DEFAULT);
     }

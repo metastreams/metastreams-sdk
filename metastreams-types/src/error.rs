@@ -100,7 +100,7 @@ impl FieldError {
 }
 
 /// The `error` object inside the envelope.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ErrorDetail {
     /// Stable, machine-readable. Clients switch on this, never on `message`.
