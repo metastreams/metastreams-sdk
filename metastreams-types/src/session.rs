@@ -1,7 +1,6 @@
 //! The session-token mint: what `POST /v1/session-tokens` reads and answers.
 //!
-//! The credential itself is `metastreams-keys`' `session.rs`; §9 of
-//! <https://docs.metastreams.io/get-started/authentication> is its contract.
+//! <https://docs.metastreams.io/get-started/authentication> documents the token itself.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
