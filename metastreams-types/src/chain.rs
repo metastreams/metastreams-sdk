@@ -37,6 +37,8 @@ pub enum SpotChain {
     Robinhood,
     /// Elysium mainnet (Arbitrum Orbit L2 on HyperEVM). Native gas token is HYPE.
     Elysium,
+    /// Ethereum mainnet (EVM L1).
+    Ethereum,
 }
 
 impl SpotChain {
@@ -45,7 +47,7 @@ impl SpotChain {
     pub fn address_family(&self) -> AddressFamily {
         match self {
             Self::Solana => AddressFamily::Solana,
-            Self::Bsc | Self::Robinhood | Self::Elysium => AddressFamily::Evm,
+            Self::Bsc | Self::Robinhood | Self::Elysium | Self::Ethereum => AddressFamily::Evm,
         }
     }
 }
@@ -172,7 +174,7 @@ mod tests {
         // Real `Chain` variants Metastreams does not serve. Spot rows exist only
         // for the `SpotChain` set, and a chain that answers empty is not
         // published.
-        for slug in ["arbitrum", "tron", "hyper_evm", "polygon", "ethereum"] {
+        for slug in ["arbitrum", "tron", "hyper_evm", "polygon"] {
             let error = parse(slug).expect_err("not served by Metastreams");
             assert_eq!(error.code, ErrorCode::UnsupportedChain);
         }

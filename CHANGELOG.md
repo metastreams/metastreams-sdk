@@ -2,6 +2,12 @@
 
 All notable changes to the two crates in this repository. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and both crates share one version.
 
+## 0.5.0 - 2026-11-23
+
+### Breaking
+
+- `SpotChain::Ethereum`. The API serves Ethereum mainnet, so a `match` on `SpotChain` needs the new arm. Before this, every Ethereum payload, such as an Ethereum `chain.nativePrices` update, failed to decode.
+
 ## 0.4.0 - 2026-11-23
 
 ### Added
