@@ -613,8 +613,9 @@ mod tests {
     use std::future::Future;
 
     use futures::poll;
+    use reqwest::StatusCode;
     use serde_json::json;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
     use tokio::task::JoinHandle;
     use tokio_tungstenite::accept_hdr_async;
@@ -630,7 +631,7 @@ mod tests {
     use metastreams_types::stream::{AckStatus, UiTokenExit};
     use metastreams_types::trade::{TradeDirection, WalletFilter};
 
-    use crate::MetastreamsProvider;
+    use crate::{MetastreamsProvider, StreamRoute};
 
     const KEY: &str = "meta_test";
     const MINT: &str = "So11111111111111111111111111111111111111112";
@@ -639,27 +640,193 @@ mod tests {
 
     type ServerSocket = WebSocketStream<TcpStream>;
 
-    /// A one-socket server: it checks the upgrade, then runs `script` on the socket.
+    /// The answer of a server with no direct stream to its connect call.
+    const NOT_FOUND: &[u8] =
+        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+
+    /// A one-socket server with no direct stream. It checks the upgrade, then runs `script` on it.
     async fn serve<S, Fut>(script: S) -> (MetastreamsProvider, JoinHandle<()>)
+    where
+        S: FnOnce(ServerSocket) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let address = listener.local_addr().expect("an address");
+        let server = tokio::spawn(accept_one(listener, KEY.to_owned(), script));
+        let provider = MetastreamsProvider::new_with_base_url(KEY, &format!("http://{address}"))
+            .expect("provider");
+        (provider, server)
+    }
+
+    /// Answer each plain request on `listener` with `404`, as a server with no direct stream does.
+    /// Then upgrade the first handshake that presents `bearer`, and run `script` on it.
+    async fn accept_one<S, Fut>(listener: TcpListener, bearer: String, script: S)
     where
         S: FnOnce(ServerSocket) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send,
     {
+        loop {
+            let (mut tcp, _) = listener.accept().await.expect("a client");
+            let mut head = [0_u8; 4];
+            tcp.peek(&mut head).await.expect("a request");
+            if &head != b"GET " {
+                tcp.write_all(NOT_FOUND).await.expect("a write");
+                continue;
+            }
+            let check = |request: &Request, response: Response| {
+                assert_eq!(request.uri().path(), "/v1/stream");
+                let presented = request.headers()["authorization"].to_str().expect("ASCII");
+                assert_eq!(presented, format!("Bearer {bearer}"));
+                Ok(response)
+            };
+            script(accept_hdr_async(tcp, check).await.expect("an upgrade")).await;
+            return;
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_opens_the_direct_stream_with_the_token_it_is_given() {
+        let direct = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let url = format!("ws://{}/v1/stream", direct.local_addr().expect("an address"));
+        let _direct = tokio::spawn(accept_one(direct, "metaconnect_t".to_owned(), drain));
+        let api = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/stream/connect"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "url": url,
+                "token": "metaconnect_t",
+                "expiresAt": AT,
+            })))
+            .expect(1)
+            .mount(&api)
+            .await;
+        let provider = MetastreamsProvider::new_with_base_url(KEY, &api.uri()).expect("provider");
+
+        provider.connect().await.expect("a direct socket");
+    }
+
+    /// The error a connect call that answers `status` returns, with no try on the proxied route.
+    async fn refused_connect(status: u16, code: &str) -> MetastreamsError {
+        let api = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/stream/connect"))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .insert_header("retry-after", "1")
+                    .set_body_json(json!({ "error": { "code": code, "message": "Refused." } })),
+            )
+            .expect(1)
+            .mount(&api)
+            .await;
+        let base_stream = Mock::given(method("GET")).and(path("/v1/stream"));
+        base_stream.respond_with(ResponseTemplate::new(500)).expect(0).mount(&api).await;
+        let provider = MetastreamsProvider::new_with_base_url(KEY, &api.uri()).expect("provider");
+
+        provider.connect().await.expect_err("a refusal")
+    }
+
+    #[tokio::test]
+    async fn a_refused_connect_call_is_returned_and_never_retried_on_the_proxied_route() {
+        let unauthorized = refused_connect(401, "UNAUTHORIZED").await;
+        assert!(matches!(
+            unauthorized,
+            MetastreamsError::Api { status: StatusCode::UNAUTHORIZED, .. }
+        ));
+
+        let exhausted = refused_connect(402, "CREDITS_EXHAUSTED").await;
+        assert!(matches!(
+            exhausted,
+            MetastreamsError::Api { status: StatusCode::PAYMENT_REQUIRED, .. }
+        ));
+
+        let limited = refused_connect(429, "RATE_LIMITED").await;
+        assert!(matches!(limited, MetastreamsError::RateLimited { .. }), "{limited:?}");
+    }
+
+    #[tokio::test]
+    async fn connect_falls_back_to_the_proxied_route_when_the_direct_handshake_hangs() {
+        // The direct listener accepts the connection and never answers the upgrade.
+        let silent = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let url = format!("ws://{}/v1/stream", silent.local_addr().expect("an address"));
+        let _silent = tokio::spawn(async move {
+            let (_held, _) = silent.accept().await.expect("a client");
+            std::future::pending::<()>().await;
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let address = listener.local_addr().expect("an address");
+        let _server = tokio::spawn(async move {
+            let (mut tcp, _) = listener.accept().await.expect("a client");
+            let mut request = [0_u8; 1024];
+            let read = tcp.read(&mut request).await.expect("a request");
+            assert!(read > 0, "a request");
+            let body = json!({ "url": url, "token": "metaconnect_t", "expiresAt": AT }).to_string();
+            let answer = format!(
+                "HTTP/1.1 201 Created\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            tcp.write_all(answer.as_bytes()).await.expect("a write");
+            accept_one(listener, KEY.to_owned(), drain).await;
+        });
+        let provider = MetastreamsProvider::new_with_base_url(KEY, &format!("http://{address}"))
+            .expect("provider");
+
+        let started = std::time::Instant::now();
+        provider.connect().await.expect("a proxied socket");
+        assert!(started.elapsed() >= Duration::from_secs(3), "{:?}", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn connect_falls_back_to_the_proxied_route_when_the_direct_socket_fails() {
+        let closed = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let unreachable = format!("ws://{}/v1/stream", closed.local_addr().expect("an address"));
+        drop(closed);
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let address = listener.local_addr().expect("an address");
+        let _server = tokio::spawn(async move {
+            // The connect call answers the unreachable URL; the handshake then comes here.
+            let (mut tcp, _) = listener.accept().await.expect("a client");
+            let mut request = [0_u8; 1024];
+            let read = tcp.read(&mut request).await.expect("a request");
+            assert!(read > 0, "a request");
+            let body = json!({ "url": unreachable, "token": "metaconnect_t", "expiresAt": AT });
+            let body = body.to_string();
+            let answer = format!(
+                "HTTP/1.1 201 Created\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            tcp.write_all(answer.as_bytes()).await.expect("a write");
+            accept_one(listener, KEY.to_owned(), drain).await;
+        });
+        let provider = MetastreamsProvider::new_with_base_url(KEY, &format!("http://{address}"))
+            .expect("provider");
+
+        provider.connect().await.expect("a socket on the base URL");
+    }
+
+    #[tokio::test]
+    async fn the_proxied_route_opens_the_socket_with_no_connect_call() {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
         let address = listener.local_addr().expect("an address");
         let server = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.expect("a client");
             let check = |request: &Request, response: Response| {
+                assert_eq!(
+                    request.method(),
+                    "GET",
+                    "the first request is the upgrade, not a connect call"
+                );
                 assert_eq!(request.uri().path(), "/v1/stream");
-                let bearer = request.headers()["authorization"].to_str().expect("an ASCII header");
-                assert_eq!(bearer, format!("Bearer {KEY}"));
+                let presented = request.headers()["authorization"].to_str().expect("ASCII");
+                assert_eq!(presented, format!("Bearer {KEY}"));
                 Ok(response)
             };
-            script(accept_hdr_async(tcp, check).await.expect("an upgrade")).await;
+            accept_hdr_async(tcp, check).await.expect("an upgrade");
         });
         let provider = MetastreamsProvider::new_with_base_url(KEY, &format!("http://{address}"))
             .expect("provider");
-        (provider, server)
+
+        provider.connect_via(StreamRoute::Proxied).await.expect("a proxied socket");
+        server.await.expect("the server saw only the upgrade");
     }
 
     /// The next text frame, as the client sends it.
@@ -1352,6 +1519,12 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
         let address = listener.local_addr().expect("an address");
         tokio::spawn(async move {
+            // The connect call finds no direct stream; the upgrade then comes on a new socket.
+            let (mut tcp, _) = listener.accept().await.expect("a client");
+            let mut connect_call = [0_u8; 1024];
+            let read = tcp.read(&mut connect_call).await.expect("a request");
+            assert!(read > 0, "a request");
+            tcp.write_all(NOT_FOUND).await.expect("a write");
             let (mut tcp, _) = listener.accept().await.expect("a client");
             // Read the whole upgrade, so the hang-up is a clean end rather than a reset.
             let mut request = Vec::new();

@@ -11,6 +11,9 @@ pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Deadline for the TCP and TLS connect, and for the stream socket's whole handshake.
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Deadline for the direct stream socket's handshake, after which it opens on the base URL.
+pub(crate) const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// How often an idle stream socket sends `ping`; the server never pings first.
 pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
 

@@ -1,5 +1,5 @@
 //! Typed client for the Metastreams market-data API; see [`MetastreamsProvider`].
-//! [`MetastreamsProvider::connect`] opens the `/v1/stream` socket.
+//! [`MetastreamsProvider::connect`] opens the stream socket; [`StreamRoute`] picks its path.
 
 mod constants;
 mod error;
@@ -18,7 +18,7 @@ pub use metastreams_types::trending::TrendingWindow;
 
 pub use constants::BASE_URL;
 pub use error::{MetastreamsError, Result};
-pub use provider::MetastreamsProvider;
+pub use provider::{MetastreamsProvider, StreamRoute};
 pub use stream::{
     CandleOptions, CloseReason, Event, LostCause, StreamConnection, SubscriptionStream,
 };

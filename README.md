@@ -67,6 +67,18 @@ async fn main() -> metastreams_sdk::Result<()> {
 }
 ```
 
+### Routes
+
+`connect()` takes the direct route: a free `POST /v1/stream/connect`, then the socket on the direct stream URL it returns, with no proxy between. It falls back to the proxied route, `wss://api.metastreams.io/v1/stream`, when the server has no direct stream, the connect call fails, or the direct handshake fails or takes over 3 seconds. A `401`, `402` or `429` on the connect call returns at once, because the proxied route refuses it too.
+
+To always take the proxied route:
+
+```rust
+let connection = provider.connect_via(StreamRoute::Proxied).await?;
+```
+
+Neither route is faster from every location. Measure both from where your client runs.
+
 The SDK never reconnects. The server keeps no subscription across sockets and replays nothing, so a reconnect always leaves a gap that only the consumer can fill, from REST. `MetastreamsError::is_transient` says whether the same call can succeed later.
 
 `metastreams-sdk/examples/` holds both programs. Run one with:

@@ -8,6 +8,7 @@ pub mod address;
 pub mod balance;
 pub mod candle;
 pub mod chain;
+pub mod connect;
 mod csv;
 pub mod decimal;
 pub mod discovery;

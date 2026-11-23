@@ -8,7 +8,7 @@ Read <https://docs.metastreams.io> before changing anything here — every metho
 
 | Module | Owns |
 |--------|------|
-| `provider.rs` | `MetastreamsProvider` — the bearer key, one method per `/v1` operation (the reads, and the session-token mint), and `connect` for the `/v1/stream` socket |
+| `provider.rs` | `MetastreamsProvider` — the bearer key, one method per `/v1` operation (the reads, and the session-token mint), and `connect` / `connect_via` for the stream socket on a `StreamRoute`: direct, or proxied |
 | `stream.rs` | `StreamConnection` and `SubscriptionStream` — typed subscriptions over one socket, each an in-order `Event` stream of updates and exits, and why each one ends |
 | `error.rs` | `MetastreamsError` — a transport failure, a 429 and its `Retry-After`, the API's error envelope, or a subscription's end |
 | `constants.rs` | The production origin, the request deadlines, and the stream socket's ping and buffer limits |
