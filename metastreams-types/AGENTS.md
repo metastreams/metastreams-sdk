@@ -26,6 +26,7 @@ Read <https://docs.metastreams.io> before changing anything here — every type 
 | `search.rs` | The search query, its kinds and sorts, and the kind-tagged hits |
 | `error.rs` | `ErrorCode`, the `{error:{code,message,details?}}` envelope, and the marker that carries a detail through serde |
 | `stream.rs` | The WebSocket frames, each channel's filter typed to its name, update and exit payloads by `Subscription`, the `Throttled` marker, and the subprotocol a browser offers beside its session token |
+| `connect.rs` | `UiStreamConnection`, the direct stream URL and the token `POST /v1/stream/connect` answers |
 | `session.rs` | The session-token mint: its request body, and the token it answers |
 | `filter.rs` | The stream filter language: `TokenFilter`, its inclusive `Range`, and its `exclude` side; `TradeFilter`, `TransferFilter` and `CandleFilter` build on them |
 | `chain.rs` | The `SpotChain`, `AddressFamily` and `AnchorToken` copies, and the slug parse that refuses an unknown slug with `UNSUPPORTED_CHAIN` |

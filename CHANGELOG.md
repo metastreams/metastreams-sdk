@@ -2,6 +2,16 @@
 
 All notable changes to the two crates in this repository. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and both crates share one version.
 
+## 0.4.0 - 2026-11-23
+
+### Added
+
+- `StreamRoute` picks the path the stream socket takes. The frames, limits and billing are the same on both.
+  - `Direct` sends a free `POST /v1/stream/connect` and opens the socket on the direct stream URL it returns, with no proxy between. It falls back to `Proxied` when the server has no direct stream, the connect call fails, or the direct handshake fails or takes over 3 seconds. A `401`, `402` or `429` on the connect call returns at once.
+  - `Proxied` opens `/v1/stream` on the base URL, through the proxy in front of the API, with no connect call.
+- `connect_via(route)` opens the socket on a route. `connect()` takes `StreamRoute::Direct`.
+- `types::connect::UiStreamConnection`, the answer of `POST /v1/stream/connect`.
+
 ## 0.3.0 - 2026-11-19
 
 The API moved to one collection endpoint per resource. Each takes a list of addresses and reads every chain in scope of each address.

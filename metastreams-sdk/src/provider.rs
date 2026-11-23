@@ -3,6 +3,7 @@
 use std::fmt;
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
 use reqwest::{Client, RequestBuilder, StatusCode};
 use rustls::crypto::aws_lc_rs;
@@ -21,6 +22,7 @@ use metastreams_types::address::MultiChainAddress;
 use metastreams_types::balance::{UiWalletBalances, WalletBalancesQuery};
 use metastreams_types::candle::{CandleSeriesQuery, UiCandleSeries};
 use metastreams_types::chain::SpotChain;
+use metastreams_types::connect::UiStreamConnection;
 use metastreams_types::discovery::{SpotPulseSubscriptionConfig, UiSpotPulseUpdate};
 use metastreams_types::native_price::{NativePricesQuery, UiNativePrice};
 use metastreams_types::portfolio::{PortfolioQuery, UiPortfolioResponse};
@@ -32,9 +34,23 @@ use metastreams_types::token::{TokensQuery, UiSpotToken};
 use metastreams_types::trade::{TradesQuery, UiSpotTrades};
 use metastreams_types::trending::{SpotTrendingFilter, UiSpotTrendingDelta};
 
-use crate::constants::{BASE_URL, CONNECT_TIMEOUT, REQUEST_TIMEOUT};
+use crate::constants::{BASE_URL, CONNECT_TIMEOUT, DIRECT_CONNECT_TIMEOUT, REQUEST_TIMEOUT};
 use crate::error::{MetastreamsError, Result, request_id};
 use crate::stream::StreamConnection;
+
+/// The path a stream socket takes. The frames, limits and billing are the same on both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamRoute {
+    /// The server's direct stream, after a free connect call. No proxy sits between.
+    /// It falls back to [`Proxied`](Self::Proxied) when the server has no direct stream or the
+    /// connect call fails. It also falls back when the direct handshake fails or takes over
+    /// 3 seconds.
+    /// A `401`, `402` or `429` on the connect call returns at once, because every route refuses it.
+    Direct,
+    /// `/v1/stream` on the base URL, through the proxy in front of the API, with no connect call.
+    Proxied,
+}
 
 /// Typed client for the Metastreams API. Each call sends one request and never retries.
 #[derive(Clone)]
@@ -69,26 +85,82 @@ impl MetastreamsProvider {
         Ok(Self { client, tls: tls_config(), base, api_key: api_key.into() })
     }
 
-    /// Opens one `/v1/stream` socket; each [`StreamConnection::subscribe`] shares it.
+    /// Opens one stream socket on [`StreamRoute::Direct`]; each [`StreamConnection::subscribe`]
+    /// shares it.
     ///
     /// # Errors
-    /// A refused handshake reads as a refused REST call. A bad key is `Api` with `UNAUTHORIZED`;
-    /// a key at its socket limit is `RateLimited`.
-    #[instrument(skip(self))]
+    /// As [`connect_via`](Self::connect_via).
     pub async fn connect(&self) -> Result<StreamConnection> {
+        self.connect_via(StreamRoute::Direct).await
+    }
+
+    /// Opens one stream socket on `route`; each [`StreamConnection::subscribe`] shares it.
+    ///
+    /// # Errors
+    /// A refused connect call or handshake reads as a refused REST call. A bad key is `Api` with
+    /// `UNAUTHORIZED`; a key at its socket limit is `RateLimited`.
+    #[instrument(skip(self))]
+    pub async fn connect_via(&self, route: StreamRoute) -> Result<StreamConnection> {
+        match route {
+            StreamRoute::Direct => self.connect_direct_or_proxied().await,
+            StreamRoute::Proxied => self.connect_proxied().await,
+        }
+    }
+
+    async fn connect_direct_or_proxied(&self) -> Result<StreamConnection> {
+        let request = self.client.post(self.url("v1/stream/connect"));
+        let direct: UiStreamConnection = match self.send(request).await {
+            Ok(direct) => direct,
+            Err(error) if refuses_every_path(&error) => return Err(error),
+            Err(error) => {
+                tracing::debug!(%error, "no direct stream; opening the proxied stream");
+                return self.connect_proxied().await;
+            }
+        };
+        match self.connect_direct(&direct).await {
+            Ok(connection) => Ok(connection),
+            Err(error) => {
+                tracing::warn!(%error, url = %direct.url, "the direct stream failed to open");
+                self.connect_proxied().await
+            }
+        }
+    }
+
+    async fn connect_direct(&self, direct: &UiStreamConnection) -> Result<StreamConnection> {
+        let url = Url::parse(&direct.url)?;
+        // A token in clear text opens sockets for whoever reads it.
+        match (url.scheme(), self.base.scheme()) {
+            ("wss", _) | ("ws", "http") => {}
+            (scheme, _) => return Err(MetastreamsError::UnsupportedScheme(scheme.to_owned())),
+        }
+
+        self.open(&url, &direct.token, DIRECT_CONNECT_TIMEOUT).await
+    }
+
+    async fn connect_proxied(&self) -> Result<StreamConnection> {
         let mut url = self.url("v1/stream");
         let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
         url.set_scheme(scheme).expect("http(s) and ws(s) are interchangeable special schemes");
 
+        self.open(&url, &self.api_key, CONNECT_TIMEOUT).await
+    }
+
+    /// Opens a stream socket at `url`, presenting `credential` as its bearer, within `deadline`.
+    async fn open(
+        &self,
+        url: &Url,
+        credential: &str,
+        deadline: Duration,
+    ) -> Result<StreamConnection> {
         let mut request = url.as_str().into_client_request()?;
-        let mut bearer = HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+        let mut bearer = HeaderValue::from_str(&format!("Bearer {credential}"))
             .map_err(|_| MetastreamsError::InvalidKey)?;
         bearer.set_sensitive(true);
         request.headers_mut().insert(AUTHORIZATION, bearer);
 
         let connector = Connector::Rustls(Arc::clone(&self.tls));
         let handshake = connect_async_tls_with_config(request, None, true, Some(connector));
-        let (socket, _) = timeout(CONNECT_TIMEOUT, handshake).await.map_err(|_| {
+        let (socket, _) = timeout(deadline, handshake).await.map_err(|_| {
             tungstenite::Error::Io(io::Error::new(io::ErrorKind::TimedOut, "stream handshake"))
         })??;
         Ok(StreamConnection::spawn(socket))
@@ -234,6 +306,17 @@ impl fmt::Debug for MetastreamsProvider {
     }
 }
 
+/// Whether `error` refuses the key on every path: a bad key, spent credits or a rate limit.
+fn refuses_every_path(error: &MetastreamsError) -> bool {
+    match error {
+        MetastreamsError::RateLimited { .. } => true,
+        MetastreamsError::Api { status, .. } | MetastreamsError::Unexpected { status, .. } => {
+            matches!(*status, StatusCode::UNAUTHORIZED | StatusCode::PAYMENT_REQUIRED)
+        }
+        _ => false,
+    }
+}
+
 /// The scope a query sends: its own, else every chain this build knows.
 /// The server's default scope can hold a chain this build cannot decode.
 fn known_chains(chains: &Option<Vec<SpotChain>>) -> Option<Vec<SpotChain>> {
@@ -255,8 +338,6 @@ fn tls_config() -> Arc<ClientConfig> {
 mod tests {
     use super::*;
 
-    use std::time::Duration;
-
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -270,6 +351,7 @@ mod tests {
     use metastreams_types::position::{Lifecycle, PositionSort, PositionSortKey};
     use metastreams_types::sort::SortOrder;
     use metastreams_types::thesis::{ThesisSortKey, ThesisSource, ThesisSourceFilter};
+    use metastreams_types::time::UnixMilliseconds;
     use metastreams_types::token::holders::HolderPeriod;
     use metastreams_types::trade::{IdentityFeed, TradeDirection, WalletFilter};
     use metastreams_types::trending::TrendingWindow;
@@ -781,5 +863,20 @@ mod tests {
         let error =
             MetastreamsProvider::new_with_base_url(KEY, "ftp://example.com").expect_err("not http");
         assert!(matches!(error, MetastreamsError::UnsupportedScheme(scheme) if scheme == "ftp"));
+    }
+
+    #[tokio::test]
+    async fn a_plain_direct_url_from_an_https_base_is_never_opened() {
+        let provider = MetastreamsProvider::new_with_base_url(KEY, "https://api.example.com")
+            .expect("provider");
+        let direct = UiStreamConnection {
+            url: "ws://stream.example.com/v1/stream".to_owned(),
+            token: "metaconnect_t".to_owned(),
+            expires_at: UnixMilliseconds(1_700_000_000_000),
+        };
+
+        let refused = provider.connect_direct(&direct).await.expect_err("a refusal");
+
+        assert!(matches!(refused, MetastreamsError::UnsupportedScheme(scheme) if scheme == "ws"));
     }
 }
